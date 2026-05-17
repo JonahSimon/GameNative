@@ -269,6 +269,10 @@ class SteamService : Service(), IChallengeUrlChanged {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var reconnectJob: Job? = null
+    private var offlineAchievementSyncJob: Job? = null
+    private val pendingSyncAppIds: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val pendingSyncFileLock = Any()
+    private val pendingSyncFile by lazy { File(applicationContext.filesDir, "pending_achievement_sync.txt") }
 
     private val onEndProcess: (AndroidEvent.EndProcess) -> Unit = {
         Companion.stop()
@@ -2493,6 +2497,7 @@ class SteamService : Service(), IChallengeUrlChanged {
         suspend fun closeApp(context: Context, appId: Int, isOffline: Boolean, prefixToPath: (String) -> String) = withContext(Dispatchers.IO) {
             async {
                 if (isOffline || !isConnected) {
+                    instance?.addPendingSyncApp(appId)
                     return@async
                 }
 
@@ -2546,6 +2551,7 @@ class SteamService : Service(), IChallengeUrlChanged {
                     }
                 } finally {
                     releaseSync(appId)
+                    instance?.removePendingSyncApp(appId)
                 }
             }
         }
@@ -2835,7 +2841,7 @@ class SteamService : Service(), IChallengeUrlChanged {
 
         private fun clearUserData(clearCloudSyncState: Boolean = false) {
             PrefManager.clearSteamSessionPreferences()
-
+            instance?.clearPendingSync()
             clearDatabase(clearCloudSyncState = clearCloudSyncState)
         }
 
@@ -3267,6 +3273,13 @@ class SteamService : Service(), IChallengeUrlChanged {
         super.onCreate()
         instance = this
 
+        // Restore any app IDs that were pending achievement sync before the service was killed
+        pendingSyncAppIds.addAll(
+            runCatching {
+                pendingSyncFile.readLines().mapNotNull { it.trim().toIntOrNull() }
+            }.getOrDefault(emptyList())
+        )
+
         // JavaSteam logger CME hot-fix
         runCatching {
             val clazz = Class.forName("in.dragonbra.javasteam.util.log.LogManager")
@@ -3520,6 +3533,9 @@ class SteamService : Service(), IChallengeUrlChanged {
         _unifiedFriends = null
 
         reconnectJob?.cancel()
+        offlineAchievementSyncJob?.cancel()
+        offlineAchievementSyncJob = null
+        pendingSyncAppIds.clear()
         isStopping = false
         retryAttempt = 0
 
@@ -3571,6 +3587,8 @@ class SteamService : Service(), IChallengeUrlChanged {
         Timber.i("Disconnected from Steam. User initiated: ${callback.isUserInitiated}")
 
         isConnected = false
+        offlineAchievementSyncJob?.cancel()
+        offlineAchievementSyncJob = null
 
         if (!isStopping && retryAttempt < MAX_RETRY_ATTEMPTS) {
             retryAttempt++
@@ -3669,6 +3687,8 @@ class SteamService : Service(), IChallengeUrlChanged {
                 scope.launch {
                     resumePendingWorkshopDownloads()
                 }
+
+                syncPendingOfflineAchievements()
             }
 
             else -> {
@@ -3718,6 +3738,101 @@ class SteamService : Service(), IChallengeUrlChanged {
             }
 
             WorkshopManager.startWorkshopDownload(appId, enabledIds, context)
+        }
+    }
+
+    internal fun addPendingSyncApp(appId: Int) {
+        synchronized(pendingSyncFileLock) {
+            pendingSyncAppIds.add(appId)
+            runCatching { pendingSyncFile.writeText(pendingSyncAppIds.joinToString("\n")) }
+        }
+        Timber.tag("achievements").d("Recording appId=$appId for offline achievement sync on reconnect")
+    }
+
+    internal fun removePendingSyncApp(appId: Int) {
+        synchronized(pendingSyncFileLock) {
+            pendingSyncAppIds.remove(appId)
+            runCatching {
+                if (pendingSyncAppIds.isEmpty()) pendingSyncFile.delete()
+                else pendingSyncFile.writeText(pendingSyncAppIds.joinToString("\n"))
+            }
+        }
+    }
+
+    internal fun clearPendingSync() {
+        synchronized(pendingSyncFileLock) {
+            pendingSyncAppIds.clear()
+            runCatching { pendingSyncFile.delete() }
+        }
+    }
+
+    private fun syncPendingOfflineAchievements() {
+        offlineAchievementSyncJob?.cancel()
+        offlineAchievementSyncJob = scope.launch {
+            try {
+                delay(2_000)
+
+                if (!isConnected || !isLoggedIn) {
+                    Timber.tag("achievements").d("Skipping reconnect achievement sync sweep — Steam no longer connected")
+                    return@launch
+                }
+
+                val appsToSync = pendingSyncAppIds.toSet()
+                if (appsToSync.isEmpty()) {
+                    Timber.tag("achievements").d("Skipping reconnect achievement sync sweep — no apps were closed while offline")
+                    return@launch
+                }
+
+                Timber.tag("achievements").i("Syncing offline achievements for ${appsToSync.size} app(s) closed while disconnected")
+                for (appId in appsToSync) {
+                    ensureActive()
+
+                    if (!isConnected || !isLoggedIn) {
+                        Timber.tag("achievements").d("Stopping reconnect achievement sync sweep — Steam no longer connected")
+                        return@launch
+                    }
+
+                    val gseSaveDirs = getGseSaveDirs(applicationContext, appId).filter { it.isDirectory }
+                    if (gseSaveDirs.isEmpty()) {
+                        removePendingSyncApp(appId)
+                        continue
+                    }
+
+                    val hasOfflineAchievementData = gseSaveDirs.any { dir ->
+                        File(dir, "achievements.json").exists() ||
+                            (File(dir, "stats").isDirectory && (File(dir, "stats").listFiles()?.isNotEmpty() == true))
+                    }
+                    if (!hasOfflineAchievementData) {
+                        removePendingSyncApp(appId)
+                        continue
+                    }
+
+                    if (!tryAcquireSync(appId)) {
+                        Timber.tag("achievements").d("Skipping reconnect achievement sync for appId=$appId — sync already in progress")
+                        continue
+                    }
+
+                    try {
+                        Timber.tag("achievements").i("Attempting reconnect achievement sync for appId=$appId")
+                        syncAchievementsFromGoldberg(applicationContext, appId)
+                        removePendingSyncApp(appId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.tag("achievements").e(e, "Reconnect achievement sync failed for appId=$appId")
+                    } finally {
+                        releaseSync(appId)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.tag("achievements").e(e, "Reconnect achievement sync sweep failed")
+            } finally {
+                if (offlineAchievementSyncJob?.isActive != true) {
+                    offlineAchievementSyncJob = null
+                }
+            }
         }
     }
 
