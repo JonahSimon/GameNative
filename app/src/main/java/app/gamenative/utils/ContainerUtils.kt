@@ -856,6 +856,8 @@ object ContainerUtils {
                 dxwrapper = initialDxWrapper,
                 dxwrapperConfig = PrefManager.dxWrapperConfig,
                 audioDriver = PrefManager.audioDriver,
+                pulseaudioSuspendBehavior = PrefManager.pulseaudioSuspendBehavior,
+                pulseaudioLowLatency = PrefManager.pulseaudioLowLatency,
                 wincomponents = PrefManager.winComponents,
                 drives = drives,
                 execArgs = PrefManager.execArgs,
