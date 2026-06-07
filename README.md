@@ -28,9 +28,9 @@
 
 ---
 
-GameNative lets you run the PC games in your Steam, Epic and GOG libraries directly on Android — no streaming, no second subscription. Your saves sync to the cloud, so you can stop on your PC and keep going on your phone.
+GameNative lets you run the PC games in your Steam, Epic and GOG libraries directly on Android — no streaming required. Your saves sync to the cloud, so you can stop on your PC and keep going on your phone.
 
-It's still early. Not every game runs yet, and some need tweaking to play well, but the community is constantly finding and sharing configs that work — and a lot of those get applied automatically.
+It's still early. Not every game runs yet, and some need tweaking to play well, but the community is constantly finding and sharing configs that work — and these get applied automatically. You can see if anyone has tried running your game successfully at https://gamenative.app/compatibility.
 
 ## What you get
 
@@ -41,11 +41,17 @@ It's still early. Not every game runs yet, and some need tweaking to play well, 
 - Automatic game artwork via SteamGridDB
 - Anonymous analytics only — no names, emails, IPs or device IDs, ever
 
-## Screenshots
+## Demo
 
-<!-- TODO: drop in real GameNative screenshots here -->
+TechDweeb walks through setting up GameNative on an Android handheld in a couple of minutes:
 
-There's a clip of [Stray running on a Poco F6](https://github.com/user-attachments/assets/1870fd14-7de9-4054-ba92-d3a5c73686b5) if you want to see it in motion.
+<div align="center">
+
+[![Steam Games on Android with GameNative IN 2 MINUTES!](https://img.youtube.com/vi/QqIChmAu2_A/maxresdefault.jpg)](https://youtu.be/QqIChmAu2_A?t=53)
+
+</div>
+
+Thanks to [TechDweeb](https://www.youtube.com/@TechDweeb) for the video. There's also a clip of [Stray running on a Poco F6](https://github.com/user-attachments/assets/1870fd14-7de9-4054-ba92-d3a5c73686b5) if you want to see it in motion.
 
 ## How to use
 
