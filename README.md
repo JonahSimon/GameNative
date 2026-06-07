@@ -47,7 +47,7 @@ It's still early. Not every game runs yet, and some need tweaking to play well, 
 
 <div align="center">
 
-<a href="https://youtu.be/QqIChmAu2_A?si=Ha6xzTQXZA2H8HUN&t=53" target="_blank"><img src="https://github.com/utkarshdalal/GameNative/blob/sexify-readme/img.png" alt="Youtube Video" /></a>
+<a href="https://youtu.be/QqIChmAu2_A?si=Ha6xzTQXZA2H8HUN&t=53" target="_blank"><img src="https://github.com/user-attachments/assets/6957e3a1-34ac-41f5-b558-0f1868dbf3d4" alt="Youtube Video" /></a>
 
 </div>
 
