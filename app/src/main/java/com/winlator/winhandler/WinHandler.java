@@ -52,7 +52,7 @@ public class WinHandler {
 
     private static final String TAG = "WinHandler";
     private final ControllerManager controllerManager;
-    public static final int MAX_PLAYERS = 1;
+    public static final int MAX_PLAYERS = 4;
     private final MappedByteBuffer[] extraGamepadBuffers = new MappedByteBuffer[MAX_PLAYERS - 1];
     private final ExternalController[] extraControllers = new ExternalController[MAX_PLAYERS - 1];
     private MappedByteBuffer gamepadBuffer;
@@ -78,7 +78,7 @@ public class WinHandler {
     private final XServerRendererView xServerView;
 
     private InputControlsView inputControlsView;
-    private Thread rumblePollerThread;
+    private Thread[] rumblePollerThreads;
     private short lastLowFreq = 0;  // Use 'short' instead of uint16_t
     private short lastHighFreq = 0; // Use 'short' instead of uint16_t
     private boolean isRumbling = false;
@@ -86,7 +86,7 @@ public class WinHandler {
     private Context activity;
     private final java.util.Set<Integer> ignoredDeviceIds = new java.util.HashSet<>();
     private RandomAccessFile gamepadRaf;
-    private RandomAccessFile[] extraGamepadRafs;
+    private RandomAccessFile[] extraGamepadRafs = new RandomAccessFile[MAX_PLAYERS - 1];
 
     private static final int OFF_LX = 4;
     private static final int OFF_LY = 6;
@@ -166,6 +166,20 @@ public class WinHandler {
                 Log.i(TAG, "Initialized Player " + (i + 2) + " with: " + extraDevice.getName());
             }
         }
+    }
+
+    private ExternalController getControllerFromSlot(int slot){
+        if (slot <= 0) return currentController;
+        if(slot > extraControllers.length) return null;
+
+        return extraControllers[slot -1];
+    }
+
+    private MappedByteBuffer getGamepadBuffer(int slot) {
+        if (slot <= 0) return gamepadBuffer;
+        if(slot > extraGamepadBuffers.length) return null;
+
+        return extraGamepadBuffers[slot -1];
     }
 
     private boolean sendPacket(int port) {
@@ -369,8 +383,13 @@ public class WinHandler {
         this.running = false;
         rumbleTeardown(0);
         try {
-            if (rumblePollerThread != null)
-                this.rumblePollerThread.join();
+            if (rumblePollerThreads != null && rumblePollerThreads.length > 0) {
+                for (Thread t : rumblePollerThreads) {
+                    if (t != null) {
+                        t.join();
+                    }
+                }
+            }
         } catch (InterruptedException ignored) {
         }
         DatagramSocket datagramSocket = this.socket;
@@ -611,37 +630,44 @@ public class WinHandler {
     }
 
     private void startRumblePoller() {
-        rumblePollerThread = new Thread(() -> {
-            int curSeq = 0;
-            int lastSeq = 0;
-            while (running) {
-                try {
-                    curSeq = WinHandler.waitForRumble(0, lastSeq);
-                    if (curSeq == lastSeq) {
-                        continue;
-                    }
-
-                    lastSeq = curSeq;
-
-                    // Read the rumble values from the shared memory file after change was signaled or timeout happened
-                    short lowFreq = gamepadBuffer.getShort(OFF_RUMBLE_LOW);
-                    short highFreq = gamepadBuffer.getShort(OFF_RUMBLE_HIGH);
-
-                    // Check if the rumble state has changed
-                    if (lowFreq != lastLowFreq || highFreq != lastHighFreq) {
-                        lastLowFreq = lowFreq;
-                        lastHighFreq = highFreq;
-                        if (lowFreq == 0 && highFreq == 0) {
-                            stopVibration();
-                        } else {
-                            startVibration(lowFreq, highFreq);
+        for (int slot = 0; slot < MAX_PLAYERS; slot++) {
+           final int sl = slot;
+            Thread thread = new Thread(() -> {
+                int curSeq = 0;
+                int lastSeq = 0;
+                while (running) {
+                    try {
+                        curSeq = WinHandler.waitForRumble(sl, lastSeq);
+                        if (curSeq == lastSeq) {
+                            continue;
                         }
+
+                        lastSeq = curSeq;
+                        MappedByteBuffer buffer = getGamepadBuffer(sl);
+
+                        // Read the rumble values from the shared memory file after change was signaled or timeout happened
+                        short lowFreq = gamepadBuffer.getShort(OFF_RUMBLE_LOW);
+                        short highFreq = gamepadBuffer.getShort(OFF_RUMBLE_HIGH);
+
+                        ExternalController controller = getControllerFromSlot(s);
+
+                        // Check if the rumble state has changed
+                        if (lowFreq != lastLowFreq || highFreq != lastHighFreq) {
+                            lastLowFreq = lowFreq;
+                            lastHighFreq = highFreq;
+                            if (lowFreq == 0 && highFreq == 0) {
+                                stopVibration(controller);
+                            } else {
+                                startVibration(controller, lowFreq, highFreq);
+                            }
+                        }
+                    } catch (Exception ignored) {
                     }
-                } catch (Exception ignored) {
                 }
-            }
-        });
-        rumblePollerThread.start();
+            }, "rumble-poller-" + sl);
+            thread.start();
+            rumblePollerThreads[sl] = thread;
+        }
     }
 
     private void startVibration(short lowFreq, short highFreq) {
@@ -768,8 +794,21 @@ public class WinHandler {
         boolean handled = false;
         ExternalController externalController = this.currentController;
         buffer = gamepadBuffer;
+        int slot = controllerManager.getSlotForDevice(event.getDeviceId());
+
         // If this is a gamepad event but our controller is null or mismatched, adopt it
         InputDevice device = event.getDevice();
+
+        if (slot >= 0) {
+            ExternalController controller = getControllerFromSlot(slot);
+            if (controller != null && controller.getDeviceId() == event.getDeviceId()) {
+                handled = controller.updateStateFromKeyEvent(event); // or motion variant
+                sendMemoryFileState(controller, getGamepadBuffer(slot), slot);
+                if (handled) sendGamepadState();
+                return handled;
+            }
+        }
+
         if ((externalController == null || externalController.getDeviceId() != event.getDeviceId())
                 && device != null && ExternalController.isGameController(device)
                 && event.getRepeatCount() == 0) {
@@ -822,10 +861,10 @@ public class WinHandler {
 
 
     private void sendMemoryFileState() {
-        sendMemoryFileState(currentController, gamepadBuffer);
+        sendMemoryFileState(currentController, gamepadBuffer, 0);
     }
 
-    private void sendMemoryFileState(ExternalController controller, MappedByteBuffer buffer) {
+    private void sendMemoryFileState(ExternalController controller, MappedByteBuffer buffer, int slot) {
         if (buffer == null || controller == null) {
             return;
         }
@@ -865,10 +904,10 @@ public class WinHandler {
         }
         buffer.put(OFF_HAT, (byte)0);
 
-        notifyStateChanged(0);
+        notifyStateChanged(slot);
     }
 
-    public void sendVirtualGamepadState(GamepadState state) {
+    public void sendVirtualGamepadState(GamepadState state, int slot) {
         if (gamepadBuffer == null || state == null) {
             return;
         }
@@ -917,6 +956,6 @@ public class WinHandler {
         gamepadBuffer.put(OFF_HAT, (byte) 0);
 
         // Notify native side that state changed
-        notifyStateChanged(0);
+        notifyStateChanged(slot);
     }
 }
