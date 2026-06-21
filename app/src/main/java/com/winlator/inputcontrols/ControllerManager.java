@@ -73,7 +73,7 @@ public class ControllerManager {
 
         // On startup, we load saved settings and scan for connected devices.
         loadAssignments();
-        scanForDevices();
+        autoAssignConnectedDevices();
     }
 
 
@@ -87,8 +87,9 @@ public class ControllerManager {
         int[] deviceIds = inputManager.getInputDeviceIds();
         for (int deviceId : deviceIds) {
             InputDevice device = inputManager.getInputDevice(deviceId);
-            // We only want physical gamepads/joysticks, not virtual ones or touchscreens.
-            if (device != null && !device.isVirtual() && isGameController(device)) {
+            // Some handhelds expose built-in controls as virtual devices, so
+            // accept any device that reports a real gamepad/joystick shape.
+            if (device != null && isGameController(device)) {
                 detectedDevices.add(device);
                 knownDeviceIdentifiers.put(deviceId, getDeviceIdentifier(device));
             }
@@ -335,7 +336,7 @@ public class ControllerManager {
 
     public void onDeviceConnected(int deviceId) {
         InputDevice device = inputManager.getInputDevice(deviceId);
-        if (device == null || device.isVirtual() || !isGameController(device)) {
+        if (device == null || !isGameController(device)) {
             return;
         }
 
@@ -360,6 +361,40 @@ public class ControllerManager {
             return;
         }
         Log.i(TAG, "No free controller slot for deviceId=" + deviceId);
+    }
+
+    /**
+     * Assigns any currently connected controller that is not already bound to a player slot.
+     * Built-in controllers can be present before Android dispatches any hot-plug callback,
+     * so callers should run this after a device scan during startup/session refresh.
+     */
+    public void autoAssignConnectedDevices() {
+        scanForDevices();
+        boolean changed = false;
+        for (InputDevice device : detectedDevices) {
+            String deviceIdentifier = getDeviceIdentifier(device);
+            if (deviceIdentifier == null || getSlotForDevice(device.getId()) >= 0) {
+                continue;
+            }
+
+            int slot = getPreferredFreeSlot();
+            if (slot < 0) {
+                Log.i(TAG, "No free controller slot for connected deviceId=" + device.getId());
+                break;
+            }
+
+            enabledSlots[slot] = true;
+            assignDeviceIdentifierToSlot(slot, deviceIdentifier);
+            knownDeviceIdentifiers.put(device.getId(), deviceIdentifier);
+            changed = true;
+            Log.i(TAG, "Auto-assigned connected deviceId=" + device.getId()
+                    + " to Player " + (slot + 1));
+        }
+
+        if (changed) {
+            saveAssignments();
+            notifySlotsChanged();
+        }
     }
 
     public void onDeviceDisconnected(int deviceId) {
