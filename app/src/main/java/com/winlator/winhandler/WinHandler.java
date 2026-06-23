@@ -84,6 +84,7 @@ public class WinHandler {
     private final short[] lastHighFreq = new short[MAX_PLAYERS];
     private final boolean[] isRumbling = new boolean[MAX_PLAYERS];
     private final int[] rumbleDeviceIds = new int[MAX_PLAYERS];
+    private long lastStandalonePhoneRumbleMs = 0;
     private boolean isShowingAssignDialog = false;
     private Context activity;
     private final java.util.Set<Integer> ignoredDeviceIds = new java.util.HashSet<>();
