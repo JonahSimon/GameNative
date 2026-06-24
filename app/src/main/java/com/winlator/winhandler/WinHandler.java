@@ -10,6 +10,7 @@ import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.View;
 
 // import com.winlator.XServerDisplayActivity;
 import com.winlator.core.StringUtils;
@@ -185,7 +186,7 @@ public class WinHandler {
         } else {
             Log.i(TAG, "Player 1 has no assigned connected controller");
         }
-        setGamepadSlotConnected(0, currentController != null);
+        setGamepadSlotConnected(0, currentController != null || isVirtualGamepadActive());
         // Initialize Extra Players (2, 3, 4)
         for (int i = 0; i < extraControllers.length; i++) {
             // Player 2 is slot 1, which corresponds to extraControllers[0]
@@ -224,10 +225,25 @@ public class WinHandler {
 
     private void clearDisconnectedGamepadSlots() {
         for (int slot = 0; slot < MAX_PLAYERS; slot++) {
-            if (getControllerFromSlot(slot) == null) {
+            if (getControllerFromSlot(slot) == null && !isVirtualGamepadSlot(slot)) {
                 clearGamepadSlot(slot);
             }
         }
+    }
+
+    private boolean isVirtualGamepadSlot(int slot) {
+        return slot == 0 && isVirtualGamepadActive();
+    }
+
+    private boolean isVirtualGamepadActive() {
+        if (inputControlsView == null) {
+            return false;
+        }
+        ControlsProfile profile = inputControlsView.getProfile();
+        return profile != null
+                && profile.isVirtualGamepad()
+                && inputControlsView.isShowTouchscreenControls()
+                && inputControlsView.getVisibility() == View.VISIBLE;
     }
 
     private void clearGamepadSlot(int slot) {
@@ -879,7 +895,7 @@ public class WinHandler {
             return;
         }
         final ControlsProfile profile = inputControlsView != null ? inputControlsView.getProfile() : null;
-        final boolean useVirtualGamepad = profile != null && profile.isVirtualGamepad();
+        final boolean useVirtualGamepad = isVirtualGamepadActive();
         final boolean enabled = this.currentController != null || useVirtualGamepad;
         Iterator<Integer> it = this.gamepadClients.iterator();
         while (it.hasNext()) {

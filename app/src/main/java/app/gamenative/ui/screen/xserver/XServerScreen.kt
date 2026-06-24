@@ -2900,6 +2900,7 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
                     icView.setVisibility(View.VISIBLE)
                     icView.requestFocus()
                     icView.invalidate()
+                    winHandler.refreshControllerMappings()
                 }
             } else {
                 // View has dimensions but elements not loaded - load them now
@@ -2910,6 +2911,7 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
                 icView.setVisibility(View.VISIBLE)
                 icView.requestFocus()
                 icView.invalidate()
+                winHandler.refreshControllerMappings()
             }
         } else {
             // Elements already loaded with valid dimensions - just show
@@ -2919,6 +2921,7 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
             icView.setVisibility(View.VISIBLE)
             icView.requestFocus()
             icView.invalidate()
+            winHandler.refreshControllerMappings()
         }
     }
 
@@ -2949,6 +2952,7 @@ private fun hideInputControls() {
     PluviaApp.inputControlsView?.setShowTouchscreenControls(false)
     PluviaApp.inputControlsView?.setVisibility(View.GONE)
     PluviaApp.inputControlsView?.setProfile(null)
+    PluviaApp.xServerView?.getxServer()?.winHandler?.refreshControllerMappingsForHotplug()
 
     PluviaApp.touchpadView?.setSensitivity(1.0f)
     PluviaApp.touchpadView?.setPointerButtonLeftEnabled(true)
