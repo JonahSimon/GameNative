@@ -20,6 +20,13 @@ interface ScUiBridge {
 
     /** Dispatch one focus-nav key to the Compose UI (marshals to the UI thread). */
     fun nav(key: ScNavKey)
+
+    /** Move the on-screen pad-mouse cursor by a pixel delta (right trackpad while a menu/editor is captured). The
+     *  bridge draws the cursor over the top dialog and clamps it to that window. Marshals to the UI thread. */
+    fun moveCursor(dx: Int, dy: Int) {}
+
+    /** Inject a tap (down+up) at the current cursor position into the top dialog (right-pad click). UI thread. */
+    fun cursorTap() {}
 }
 
 /** Direction/selection intents emitted by the interpreter while a menu is captured; mapped to Android d-pad,

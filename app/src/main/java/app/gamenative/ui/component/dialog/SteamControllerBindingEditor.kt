@@ -42,6 +42,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.focusable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import kotlinx.coroutines.delay
 import app.gamenative.steamcontroller.AnalogMode
 import app.gamenative.steamcontroller.EditActivator
 import app.gamenative.steamcontroller.EditAnalog
@@ -102,7 +113,45 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
             shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            // Controller d-pad here SCROLLS the (long) content list: Compose's focus traversal (moveFocus) proved
+            // unreliable inside this Dialog's FlowRow+scroll layout — the key was consumed but focus never moved — so
+            // d-pad up/down drives the hoisted [scrollState] directly (guaranteed + visible), and the pad cursor does
+            // the pointing/clicking. onPreviewKeyEvent only fires while the root holds focus, so we hammer requestFocus
+            // until something in the dialog is focused (a freshly-opened Dialog window doesn't focus on the first frame).
+            val scrollState = rememberScrollState()
+            val nav = remember { ScNavState() }
+            val rootFocus = remember { FocusRequester() }
+            var rootHasFocus by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                // onPreviewKeyEvent only fires while the root holds focus; a freshly-opened Dialog window doesn't
+                // focus on the first frame, so hammer requestFocus until something here is focused.
+                repeat(80) { if (rootHasFocus) return@LaunchedEffect; runCatching { rootFocus.requestFocus() }; delay(25) }
+            }
+            // LB/RB cycle the active action set (sets are tab-like), mirroring the picker's bumper-tab pattern.
+            fun cycleSet(d: Int) {
+                if (config.sets.size <= 1) return
+                val i = config.sets.indexOfFirst { it.id == activeSetId }.coerceAtLeast(0)
+                activeSetId = config.sets[((i + d) % config.sets.size + config.sets.size) % config.sets.size].id
+            }
+            Column(
+                modifier = Modifier.padding(16.dp)
+                    .focusRequester(rootFocus)
+                    .onFocusChanged { rootHasFocus = it.hasFocus }
+                    .focusable()
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (ev.key) {
+                            Key.DirectionDown -> { nav.moveVertical(1); true }
+                            Key.DirectionUp -> { nav.moveVertical(-1); true }
+                            Key.DirectionRight -> { nav.moveHorizontal(1); true }
+                            Key.DirectionLeft -> { nav.moveHorizontal(-1); true }
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.ButtonA -> { nav.activate(); true }
+                            Key.ButtonL1 -> { cycleSet(-1); true }
+                            Key.ButtonR1 -> { cycleSet(1); true }
+                            else -> false
+                        }
+                    },
+            ) {
                 ScNavDialogCapture(onBack = onDismiss)  // let the controller navigate this dialog window
                 Text("Steam Controller bindings", style = MaterialTheme.typography.titleLarge)
                 Text(
@@ -112,120 +161,172 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
                     modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
                 )
                 // ── Action sets (Phase 5d): pick which set to edit, add/rename/delete, choose the launch default ──
-                Text("Action sets", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Action sets", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    BumperHint("LB")
+                    BumperHint("RB")
+                    Text("switch set", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 CmdFlow {
                     config.sets.forEachIndexed { i, s ->
                         val isDef = s.id == config.defaultSetId
-                        CmdChip((s.name.ifBlank { "Set ${i + 1}" }) + if (isDef) "  ★" else "", selected = s.id == activeSetId) {
-                            activeSetId = s.id
+                        val selectSet = { activeSetId = s.id }
+                        ScNavItem(nav, line = 0, col = i, onActivate = selectSet) {
+                            CmdChip((s.name.ifBlank { "Set ${i + 1}" }) + if (isDef) "  ★" else "", selected = s.id == activeSetId, onClick = selectSet)
                         }
                     }
-                    CmdChip("+ Add", selected = false) {
+                    val addSet = {
                         val id = config.nextSetId()
-                        config = config.copy(
-                            sets = config.sets + ScEditableSet(id = id, name = "Set ${config.sets.size + 1}"),
-                        )
+                        config = config.copy(sets = config.sets + ScEditableSet(id = id, name = "Set ${config.sets.size + 1}"))
                         activeSetId = id
+                    }
+                    ScNavItem(nav, line = 0, col = config.sets.size, onActivate = addSet) {
+                        CmdChip("+ Add", selected = false, onClick = addSet)
                     }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedTextField(
-                        value = config.sets[activeIdx].name,
-                        onValueChange = { newName ->
-                            config = config.copy(
-                                sets = config.sets.toMutableList().also { it[activeIdx] = it[activeIdx].copy(name = newName) },
-                            )
-                        },
-                        label = { Text("Set name") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
+                    var editingName by remember { mutableStateOf(false) }
+                    ScNavItem(nav, line = 1, col = 0, modifier = Modifier.weight(1f), onActivate = { editingName = true }) {
+                        ScTextEditField(
+                            label = "Set name",
+                            value = config.sets[activeIdx].name,
+                            onValueChange = { newName ->
+                                config = config.copy(
+                                    sets = config.sets.toMutableList().also { it[activeIdx] = it[activeIdx].copy(name = newName) },
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            editing = editingName,
+                            onEditingChange = { editingName = it },
+                        )
+                    }
                     Spacer(Modifier.width(8.dp))
                     // Mark this set as an action LAYER (a partial overlay pushed by a "hold/add layer" binding) vs a
                     // base action set. A layer overrides only the surfaces it defines + its buttons (see LayerOp).
                     val isLayer = config.sets[activeIdx].isLayer
-                    TextButton(onClick = {
+                    val toggleLayer = {
                         config = config.copy(sets = config.sets.toMutableList().also { it[activeIdx] = it[activeIdx].copy(isLayer = !isLayer) })
-                    }) { Text(if (isLayer) "Layer ✓" else "Layer") }
-                    TextButton(
-                        onClick = { config = config.copy(defaultSetId = activeSetId) },
-                        enabled = config.defaultSetId != activeSetId,
-                    ) { Text("Default") }
-                    TextButton(
-                        onClick = {
-                            if (config.sets.size > 1) {
-                                val removedId = config.sets[activeIdx].id
-                                val newSets = config.sets.filterIndexed { idx, _ -> idx != activeIdx }
-                                val newDefault = if (config.defaultSetId == removedId) newSets.first().id else config.defaultSetId
-                                config = config.copy(sets = newSets, defaultSetId = newDefault)
-                                activeSetId = newSets.first().id
-                            }
-                        },
-                        enabled = config.sets.size > 1,
-                    ) { Text("Delete") }
+                    }
+                    val makeDefault = { config = config.copy(defaultSetId = activeSetId) }
+                    val deleteSet = {
+                        if (config.sets.size > 1) {
+                            val removedId = config.sets[activeIdx].id
+                            val newSets = config.sets.filterIndexed { idx, _ -> idx != activeIdx }
+                            val newDefault = if (config.defaultSetId == removedId) newSets.first().id else config.defaultSetId
+                            config = config.copy(sets = newSets, defaultSetId = newDefault)
+                            activeSetId = newSets.first().id
+                        }
+                    }
+                    ScNavItem(nav, line = 1, col = 1, onActivate = toggleLayer) {
+                        TextButton(onClick = toggleLayer) { Text(if (isLayer) "Layer ✓" else "Layer") }
+                    }
+                    ScNavItem(nav, line = 1, col = 2, onActivate = makeDefault) {
+                        TextButton(onClick = makeDefault, enabled = config.defaultSetId != activeSetId) { Text("Default") }
+                    }
+                    ScNavItem(nav, line = 1, col = 3, onActivate = deleteSet) {
+                        TextButton(onClick = deleteSet, enabled = config.sets.size > 1) { Text("Delete") }
+                    }
                 }
                 HorizontalDivider(modifier = Modifier.padding(top = 6.dp))
 
-                Column(modifier = Modifier.weight(1f, fill = false).verticalScrollWithBar()) {
-                    var lastGroup = ""
-                    for (src in ScSource.entries) {
-                        if (src.group != lastGroup) {
-                            lastGroup = src.group
-                            Text(
-                                src.group,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-                            )
+                Column(
+                    modifier = Modifier.weight(1f, fill = false)
+                        .verticalScroll(scrollState)
+                        .verticalScrollbar(
+                            scrollState,
+                            MaterialTheme.colorScheme.onSurfaceVariant,
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f),
+                        ),
+                ) {
+                    // Inset the rows from the right so the scrollbar (drawn on the outer edge) doesn't overlap them.
+                    Column(modifier = Modifier.fillMaxWidth().padding(end = 12.dp)) {
+                        var navLine = 2 // lines 0=set chips, 1=Layer/Default/Delete; the scroll list starts at 2
+                        var lastGroup = ""
+                        for (src in ScSource.entries) {
+                            if (src.group != lastGroup) {
+                                lastGroup = src.group
+                                Text(
+                                    src.group,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                                )
+                            }
+                            val open = { editing = src }
+                            ScNavItem(nav, line = navLine, modifier = Modifier.fillMaxWidth(), onActivate = open) {
+                                SourceRow(src, profile.buttons[src.name] ?: EditBinding(), onClick = open)
+                            }
+                            navLine++
                         }
-                        SourceRow(src, profile.buttons[src.name] ?: EditBinding()) { editing = src }
+
+                        Text(
+                            "Analog sources",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
+                        )
+                        for (surface in AnalogSurface.ALL) {
+                            val open = { editingSurface = surface }
+                            ScNavItem(nav, line = navLine, modifier = Modifier.fillMaxWidth(), onActivate = open) {
+                                AnalogSurfaceRow(surface, surface.get(profile), onClick = open)
+                            }
+                            navLine++
+                        }
+
+                        SectionHeader("Triggers")
+                        for (side in TriggerSide.entries) {
+                            val open = { editingTrigger = side }
+                            ScNavItem(nav, line = navLine, modifier = Modifier.fillMaxWidth(), onActivate = open) {
+                                DetailRow(side.label, summarizeTrigger(side.get(profile)), onClick = open)
+                            }
+                            navLine++
+                        }
+
+                        SectionHeader("Gyro")
+                        val openGyro = { editingGyro = true }
+                        ScNavItem(nav, line = navLine, modifier = Modifier.fillMaxWidth(), onActivate = openGyro) {
+                            DetailRow("Gyro", summarizeGyro(profile.gyro), onClick = openGyro)
+                        }
+                        navLine++
+
+                        SectionHeader("Haptics")
+                        val openHaptics = { editingHaptics = true }
+                        ScNavItem(nav, line = navLine, modifier = Modifier.fillMaxWidth(), onActivate = openHaptics) {
+                            DetailRow("Haptics", summarizeHaptics(profile.haptics), onClick = openHaptics)
+                        }
                     }
-
-                    Text(
-                        "Analog sources",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
-                    )
-                    for (surface in AnalogSurface.ALL) {
-                        AnalogSurfaceRow(surface, surface.get(profile)) { editingSurface = surface }
-                    }
-
-                    SectionHeader("Triggers")
-                    for (side in TriggerSide.entries) {
-                        DetailRow(side.label, summarizeTrigger(side.get(profile))) { editingTrigger = side }
-                    }
-
-                    SectionHeader("Gyro")
-                    DetailRow("Gyro", summarizeGyro(profile.gyro)) { editingGyro = true }
-
-                    SectionHeader("Haptics")
-                    DetailRow("Haptics", summarizeHaptics(profile.haptics)) { editingHaptics = true }
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+                // Bottom action row: the last nav line (after the set chips=0, Layer/Default/Delete=1, and every scroll row).
+                val bottomLine = 2 + ScSource.entries.size + AnalogSurface.ALL.size + TriggerSide.entries.size + 2
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = {
-                        setProfile(ScEditableProfile.from(ScProfile.default()))
-                    }) { Text("Reset set") }
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
-                    Button(onClick = {
+                    val reset = { setProfile(ScEditableProfile.from(ScProfile.default())) }
+                    val save = {
                         if (ScConfigStore.saveEditableConfig(context, containerId, config)) {
-                            SnackbarManager.show("Bindings saved")
-                            onDismiss()
+                            SnackbarManager.show("Bindings saved"); onDismiss()
                         } else {
                             SnackbarManager.show("Could not save bindings")
                         }
-                    }) { Text("Save") }
+                    }
+                    ScNavItem(nav, line = bottomLine, col = 0, onActivate = reset) {
+                        TextButton(onClick = reset) { Text("Reset set") }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    ScNavItem(nav, line = bottomLine, col = 1, onActivate = onDismiss) {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    ScNavItem(nav, line = bottomLine, col = 2, onActivate = save) {
+                        Button(onClick = save) { Text("Save") }
+                    }
                 }
             }
         }
@@ -338,7 +439,8 @@ private fun summarizeHaptics(h: EditHaptics?): String = when {
 private fun TriggerPickerDialog(side: TriggerSide, current: EditTrigger, onDismiss: () -> Unit, onApply: (EditTrigger?) -> Unit) {
     val inherit = "INHERIT"
     val modeOptions = listOf(inherit to "Inherit / keep current") + TriggerEditMode.entries.map { it.name to it.uiLabel() }
-    var modeKey by remember { mutableStateOf(inherit) }
+    // Reflect the trigger's actual mode (Axis/Staged) so opening a configured trigger shows it, not "Inherit".
+    var modeKey by remember { mutableStateOf(current.mode.name) }
     var axis by remember { mutableStateOf(current.axis) }
     var soft by remember { mutableIntStateOf(current.softThresholdPct) }
     var full by remember { mutableIntStateOf(current.fullThresholdPct) }
@@ -347,36 +449,13 @@ private fun TriggerPickerDialog(side: TriggerSide, current: EditTrigger, onDismi
     var fullCmd by remember { mutableStateOf(current.full) }
     var pickingStage by remember { mutableStateOf<String?>(null) }  // "SOFT" | "FULL" | null
     val mode = runCatching { TriggerEditMode.valueOf(modeKey) }.getOrNull()
+    val nav = remember { ScNavState() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("${side.label} behavior") },
         text = {
-            Column(modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
-                ScNavDialogCapture(onBack = onDismiss)
-                LabeledDropdown("Behavior", modeOptions, modeKey) { modeKey = it }
-                if (mode != null) {
-                    Spacer(Modifier.height(8.dp))
-                    LabeledDropdown(
-                        "Analog axis",
-                        listOf("NONE" to "None", "GAMEPAD_L2" to "Left trigger (LT)", "GAMEPAD_R2" to "Right trigger (RT)"),
-                        axis,
-                    ) { axis = it }
-                }
-                if (mode == TriggerEditMode.STAGED) {
-                    Spacer(Modifier.height(8.dp))
-                    AnalogSlider("Soft-pull threshold", soft, 5, 95, "%") { soft = it }
-                    Spacer(Modifier.height(8.dp))
-                    AnalogSlider("Full-pull threshold", full, 5, 100, "%") { full = it }
-                    Spacer(Modifier.height(8.dp))
-                    // Each stage fires its own command at its threshold — tap to bind via the standard picker.
-                    DetailRow("Soft-pull command", summarize(softCmd)) { pickingStage = "SOFT" }
-                    DetailRow("Full-pull command", summarize(fullCmd)) { pickingStage = "FULL" }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
+            val doApply = {
                 if (modeKey == inherit) onApply(null)
                 else onApply(
                     current.copy(
@@ -385,9 +464,33 @@ private fun TriggerPickerDialog(side: TriggerSide, current: EditTrigger, onDismi
                         softThresholdPct = soft, fullThresholdPct = full,
                     ),
                 )
-            }) { Text("Apply") }
+            }
+            ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
+                LabeledDropdown("Behavior", modeOptions, modeKey, nav = nav, navLine = 0) { modeKey = it }
+                if (mode != null) {
+                    Spacer(Modifier.height(8.dp))
+                    LabeledDropdown(
+                        "Analog axis",
+                        listOf("NONE" to "None", "GAMEPAD_L2" to "Left trigger (LT)", "GAMEPAD_R2" to "Right trigger (RT)"),
+                        axis, nav = nav, navLine = 1,
+                    ) { axis = it }
+                }
+                if (mode == TriggerEditMode.STAGED) {
+                    Spacer(Modifier.height(8.dp))
+                    AnalogSlider("Soft-pull threshold", soft, 5, 95, "%", nav = nav, navLine = 2) { soft = it }
+                    Spacer(Modifier.height(8.dp))
+                    AnalogSlider("Full-pull threshold", full, 5, 100, "%", nav = nav, navLine = 3) { full = it }
+                    Spacer(Modifier.height(8.dp))
+                    // Each stage fires its own command at its threshold — tap to bind via the standard picker.
+                    val openSoft = { pickingStage = "SOFT" }
+                    val openFull = { pickingStage = "FULL" }
+                    ScNavItem(nav, 4, modifier = Modifier.fillMaxWidth(), onActivate = openSoft) { DetailRow("Soft-pull command", summarize(softCmd), openSoft) }
+                    ScNavItem(nav, 5, modifier = Modifier.fillMaxWidth(), onActivate = openFull) { DetailRow("Full-pull command", summarize(fullCmd), openFull) }
+                }
+                NavApplyCancelRow(nav, onApply = doApply, onCancel = onDismiss)
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {},
     )
 
     // Nested command picker for whichever stage is being bound (reuses the Phase-3 picker; no activator on a stage).
@@ -407,37 +510,37 @@ private fun TriggerPickerDialog(side: TriggerSide, current: EditTrigger, onDismi
 private fun GyroPickerDialog(current: EditGyro, onDismiss: () -> Unit, onApply: (EditGyro?) -> Unit) {
     val inherit = "INHERIT"
     val modeOptions = listOf(inherit to "Inherit / keep current") + GyroEditMode.entries.map { it.name to it.uiLabel() }
-    var modeKey by remember { mutableStateOf(inherit) }
+    // Reflect the gyro's actual mode so opening a configured gyro shows it, not "Inherit".
+    var modeKey by remember { mutableStateOf(current.mode.name) }
     var sens by remember { mutableIntStateOf(current.sensitivityPct) }
     var gate by remember { mutableStateOf(current.gate) }
     val mode = runCatching { GyroEditMode.valueOf(modeKey) }.getOrNull()
+    val nav = remember { ScNavState() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Gyro behavior") },
         text = {
-            Column(modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
-                ScNavDialogCapture(onBack = onDismiss)
-                LabeledDropdown("Behavior", modeOptions, modeKey) { modeKey = it }
+            val doApply = {
+                if (modeKey == inherit) onApply(null)
+                else onApply(current.copy(mode = mode ?: GyroEditMode.MOUSE, sensitivityPct = sens, gate = gate))
+            }
+            ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
+                LabeledDropdown("Behavior", modeOptions, modeKey, nav = nav, navLine = 0) { modeKey = it }
                 if (mode == GyroEditMode.MOUSE) {
                     Spacer(Modifier.height(8.dp))
-                    AnalogSlider("Sensitivity", sens, 25, 400, "%") { sens = it }
+                    AnalogSlider("Sensitivity", sens, 25, 400, "%", nav = nav, navLine = 1) { sens = it }
                     Spacer(Modifier.height(8.dp))
                     LabeledDropdown(
                         "Active when",
                         listOf("ALWAYS" to "Always on", "EITHER_GRIP" to "Either grip held", "LEFT_GRIP" to "Left grip held", "RIGHT_GRIP" to "Right grip held"),
-                        gate,
+                        gate, nav = nav, navLine = 2,
                     ) { gate = it }
                 }
+                NavApplyCancelRow(nav, onApply = doApply, onCancel = onDismiss)
             }
         },
-        confirmButton = {
-            TextButton(onClick = {
-                if (modeKey == inherit) onApply(null)
-                else onApply(current.copy(mode = mode ?: GyroEditMode.MOUSE, sensitivityPct = sens, gate = gate))
-            }) { Text("Apply") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {},
     )
 }
 
@@ -447,33 +550,30 @@ private fun HapticsDialog(current: EditHaptics, onDismiss: () -> Unit, onApply: 
     var left by remember { mutableStateOf(current.leftPadEnabled) }
     var right by remember { mutableStateOf(current.rightPadEnabled) }
     var detent by remember { mutableIntStateOf(current.detentStep) }
+    val nav = remember { ScNavState() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Haptics") },
         text = {
-            Column(modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
-                ScNavDialogCapture(onBack = onDismiss)
-                AnalogToggle("Haptics enabled", enabled) { enabled = it }
+            val doApply = { onApply(current.copy(enabled = enabled, leftPadEnabled = left, rightPadEnabled = right, detentStep = detent)) }
+            ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
+                AnalogToggle("Haptics enabled", enabled, nav = nav, navLine = 0) { enabled = it }
                 if (enabled) {
-                    AnalogToggle("Left pad", left) { left = it }
-                    AnalogToggle("Right pad", right) { right = it }
+                    AnalogToggle("Left pad", left, nav = nav, navLine = 1) { left = it }
+                    AnalogToggle("Right pad", right, nav = nav, navLine = 2) { right = it }
                     Spacer(Modifier.height(8.dp))
-                    AnalogSlider("Detent spacing", detent, 2000, 12000, "") { detent = it }
+                    AnalogSlider("Detent spacing", detent, 2000, 12000, "", nav = nav, navLine = 3) { detent = it }
                     Text(
                         "Detent spacing = pad travel between slide \"tick\" pulses; smaller = more frequent ticks.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
+                NavApplyCancelRow(nav, onApply = doApply, onCancel = onDismiss)
             }
         },
-        confirmButton = {
-            TextButton(onClick = {
-                onApply(current.copy(enabled = enabled, leftPadEnabled = left, rightPadEnabled = right, detentStep = detent))
-            }) { Text("Apply") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {},
     )
 }
 
@@ -538,6 +638,19 @@ private fun BindingPickerDialog(
     // ADVANCED is always available; ACTION_SETS only when the caller supplies sets.
     val tabs = CmdTab.entries.filter { it != CmdTab.ACTION_SETS || actionSets.isNotEmpty() }
     var tab by remember { mutableStateOf(initialTab(current)) }
+    // Bumpers (LB/RB) flip between command-picker tabs (the bridge dispatches L1/R1 here). Needs the dialog focused,
+    // so hammer requestFocus until it lands (a freshly-opened dialog window isn't focused on the first frame).
+    val pickerFocus = remember { FocusRequester() }
+    var pickerHasFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        repeat(80) { if (pickerHasFocus) return@LaunchedEffect; runCatching { pickerFocus.requestFocus() }; delay(25) }
+    }
+    fun cycleTab(d: Int) { tab = tabs[((tabs.indexOf(tab) + d) % tabs.size + tabs.size) % tabs.size] }
+    // Item-by-item d-pad inside the picker (command chips / key grid / Apply-Cancel). The navigable cells change with
+    // the tab, so reset the selection whenever the tab changes (ScNavState navigates only currently-registered cells).
+    val pkNav = remember { ScNavState() }
+    LaunchedEffect(tab) { pkNav.reset() }
+    val applyLine = 99 // a fixed line after any tab's content (nav only visits existing lines, so the gap is harmless)
 
     AlertDialog(
         modifier = Modifier.fillMaxWidth(0.95f),
@@ -545,7 +658,26 @@ private fun BindingPickerDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(modifier = Modifier.heightIn(max = 500.dp).verticalScrollWithBar()) {
+            Column(
+                modifier = Modifier.heightIn(max = 500.dp)
+                    .focusRequester(pickerFocus)
+                    .onFocusChanged { pickerHasFocus = it.hasFocus }
+                    .focusable()
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (ev.key) {
+                            Key.ButtonL1 -> { cycleTab(-1); true }
+                            Key.ButtonR1 -> { cycleTab(1); true }
+                            Key.DirectionDown -> { pkNav.moveVertical(1); true }
+                            Key.DirectionUp -> { pkNav.moveVertical(-1); true }
+                            Key.DirectionRight -> { pkNav.moveHorizontal(1); true }
+                            Key.DirectionLeft -> { pkNav.moveHorizontal(-1); true }
+                            Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.ButtonA -> { pkNav.activate(); true }
+                            else -> false
+                        }
+                    }
+                    .verticalScrollWithBar(),
+            ) {
                 ScNavDialogCapture(onBack = onDismiss)
                 headerContent?.invoke()
                 // A kept binding the picker can't author (advanced INHERIT, or a mouse-nudge center): show what it is.
@@ -566,41 +698,44 @@ private fun BindingPickerDialog(
                 Spacer(Modifier.height(10.dp))
                 when (tab) {
                     CmdTab.KEYBOARD -> {
-                        ModifierRow(modifiers) { m -> modifiers = if (m in modifiers) modifiers - m else modifiers + m }
+                        ModifierRow(modifiers, pkNav, 0) { m -> modifiers = if (m in modifiers) modifiers - m else modifiers + m }
                         Spacer(Modifier.height(6.dp))
-                        KeyGrid(KB_ROWS, selected = keyName.takeIf { kind == OutputKind.KEY }) {
+                        KeyGrid(KB_ROWS, selected = keyName.takeIf { kind == OutputKind.KEY }, nav = pkNav, baseLine = 1) {
                             kind = OutputKind.KEY; keyName = it
                         }
                     }
                     CmdTab.NUMPAD -> {
-                        ModifierRow(modifiers) { m -> modifiers = if (m in modifiers) modifiers - m else modifiers + m }
+                        ModifierRow(modifiers, pkNav, 0) { m -> modifiers = if (m in modifiers) modifiers - m else modifiers + m }
                         Spacer(Modifier.height(6.dp))
-                        KeyGrid(NUMPAD_ROWS, selected = keyName.takeIf { kind == OutputKind.KEY }) {
+                        KeyGrid(NUMPAD_ROWS, selected = keyName.takeIf { kind == OutputKind.KEY }, nav = pkNav, baseLine = 1) {
                             kind = OutputKind.KEY; keyName = it
                         }
                     }
                     CmdTab.MOUSE -> CmdFlow {
-                        MOUSE_CMDS.forEach { (name, label) ->
-                            CmdChip(label, selected = kind == OutputKind.MOUSE_BUTTON && mouseButton == name) {
-                                kind = OutputKind.MOUSE_BUTTON; mouseButton = name
+                        MOUSE_CMDS.toList().forEachIndexed { ci, (name, label) ->
+                            val pick = { kind = OutputKind.MOUSE_BUTTON; mouseButton = name }
+                            ScNavItem(pkNav, 0, ci, onActivate = pick) {
+                                CmdChip(label, selected = kind == OutputKind.MOUSE_BUTTON && mouseButton == name, onClick = pick)
                             }
                         }
                     }
                     CmdTab.GAMEPAD -> {
                         Text("Buttons", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         CmdFlow {
-                            ScEditableProfile.GAMEPAD_BUTTONS.forEach { (idx, label) ->
-                                CmdChip(label.removePrefix("Pad "), selected = kind == OutputKind.GAMEPAD_BUTTON && gamepadIdx == idx) {
-                                    kind = OutputKind.GAMEPAD_BUTTON; gamepadIdx = idx
+                            ScEditableProfile.GAMEPAD_BUTTONS.toList().forEachIndexed { ci, (idx, label) ->
+                                val pick = { kind = OutputKind.GAMEPAD_BUTTON; gamepadIdx = idx }
+                                ScNavItem(pkNav, 0, ci, onActivate = pick) {
+                                    CmdChip(label.removePrefix("Pad "), selected = kind == OutputKind.GAMEPAD_BUTTON && gamepadIdx == idx, onClick = pick)
                                 }
                             }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text("D-Pad", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         CmdFlow {
-                            ScEditableProfile.DPAD_DIRECTIONS.forEach { (i, label) ->
-                                CmdChip(label.removePrefix("Pad D-Pad "), selected = kind == OutputKind.GAMEPAD_DPAD && dpadIndex == i) {
-                                    kind = OutputKind.GAMEPAD_DPAD; dpadIndex = i
+                            ScEditableProfile.DPAD_DIRECTIONS.toList().forEachIndexed { ci, (i, label) ->
+                                val pick = { kind = OutputKind.GAMEPAD_DPAD; dpadIndex = i }
+                                ScNavItem(pkNav, 1, ci, onActivate = pick) {
+                                    CmdChip(label.removePrefix("Pad D-Pad "), selected = kind == OutputKind.GAMEPAD_DPAD && dpadIndex == i, onClick = pick)
                                 }
                             }
                         }
@@ -608,9 +743,10 @@ private fun BindingPickerDialog(
                     CmdTab.ACTION_SETS -> {
                         Text("Switch to action set", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         CmdFlow {
-                            actionSets.forEach { (id, name) ->
-                                CmdChip(name.ifBlank { "Set $id" }, selected = kind == OutputKind.SWITCH_ACTION_SET && targetSetId == id) {
-                                    kind = OutputKind.SWITCH_ACTION_SET; targetSetId = id
+                            actionSets.forEachIndexed { ci, (id, name) ->
+                                val pick = { kind = OutputKind.SWITCH_ACTION_SET; targetSetId = id }
+                                ScNavItem(pkNav, 0, ci, onActivate = pick) {
+                                    CmdChip(name.ifBlank { "Set $id" }, selected = kind == OutputKind.SWITCH_ACTION_SET && targetSetId == id, onClick = pick)
                                 }
                             }
                         }
@@ -618,8 +754,10 @@ private fun BindingPickerDialog(
                     CmdTab.ADVANCED -> {
                         Text("Controller actions", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         CmdFlow {
-                            CmdChip("Show keyboard", selected = kind == OutputKind.SHOW_KEYBOARD) { kind = OutputKind.SHOW_KEYBOARD }
-                            CmdChip("Open QuickMenu", selected = kind == OutputKind.OPEN_QUICK_MENU) { kind = OutputKind.OPEN_QUICK_MENU }
+                            val showKb = { kind = OutputKind.SHOW_KEYBOARD }
+                            val openQm = { kind = OutputKind.OPEN_QUICK_MENU }
+                            ScNavItem(pkNav, 0, 0, onActivate = showKb) { CmdChip("Show keyboard", selected = kind == OutputKind.SHOW_KEYBOARD, onClick = showKb) }
+                            ScNavItem(pkNav, 0, 1, onActivate = openQm) { CmdChip("Open QuickMenu", selected = kind == OutputKind.OPEN_QUICK_MENU, onClick = openQm) }
                         }
                         Spacer(Modifier.height(8.dp))
                         Text("Action layer", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -630,12 +768,15 @@ private fun BindingPickerDialog(
                                 "Operation",
                                 listOf("HOLD" to "Hold while pressed", "ADD" to "Add (toggle on)", "REMOVE" to "Remove (toggle off)"),
                                 layerOp,
+                                nav = pkNav,
+                                navLine = 1,
                             ) { layerOp = it }
                             Spacer(Modifier.height(4.dp))
                             CmdFlow {
-                                actionSets.forEach { (id, name) ->
-                                    CmdChip(name.ifBlank { "Set $id" }, selected = kind == OutputKind.LAYER_OP && layerId == id) {
-                                        kind = OutputKind.LAYER_OP; layerId = id
+                                actionSets.forEachIndexed { ci, (id, name) ->
+                                    val pick = { kind = OutputKind.LAYER_OP; layerId = id }
+                                    ScNavItem(pkNav, 2, ci, onActivate = pick) {
+                                        CmdChip(name.ifBlank { "Set $id" }, selected = kind == OutputKind.LAYER_OP && layerId == id, onClick = pick)
                                     }
                                 }
                             }
@@ -655,6 +796,8 @@ private fun BindingPickerDialog(
                         label = "Activator",
                         options = EditActivator.entries.map { it to it.uiLabel() },
                         selected = activator,
+                        nav = pkNav,
+                        navLine = applyLine - 1,
                         onSelected = { activator = it; activatorMs = it.defaultMs() },
                     )
                     activator.timingLabel()?.let { tl ->
@@ -663,25 +806,32 @@ private fun BindingPickerDialog(
                         AnalogSlider(tl, ms, 40, 1000, " ms") { activatorMs = it }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                // If still INHERIT (advanced binding left untouched), keep `current` so its description survives.
-                onApply(
+                // Clear / Cancel / Apply live IN the scrollable column (not the AlertDialog button slot) so the d-pad
+                // can reach them (the nav root + cells are all inside this column).
+                val doClear = { kind = OutputKind.NONE }
+                val doApply = {
                     // Kinds the picker can't author (advanced INHERIT / mouse-nudge) are preserved verbatim if untouched.
-                    if (kind == OutputKind.INHERIT || kind == OutputKind.MOUSE_NUDGE) current
-                    else stagedBinding(kind, keyName, modifiers, gamepadIdx, dpadIndex, mouseButton, targetSetId, layerId, layerOp, activator, activatorMs),
-                )
-            }) { Text("Apply") }
-        },
-        dismissButton = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Clear/unbind is kept always-visible in the button row (was buried at the bottom of the scroll).
-                TextButton(onClick = { kind = OutputKind.NONE }) { Text("Clear") }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                    onApply(
+                        if (kind == OutputKind.INHERIT || kind == OutputKind.MOUSE_NUDGE) current
+                        else stagedBinding(kind, keyName, modifiers, gamepadIdx, dpadIndex, mouseButton, targetSetId, layerId, layerOp, activator, activatorMs),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ScNavItem(pkNav, applyLine, 0, onActivate = doClear) { TextButton(onClick = doClear) { Text("Clear") } }
+                    Spacer(Modifier.width(8.dp))
+                    ScNavItem(pkNav, applyLine, 1, onActivate = onDismiss) { TextButton(onClick = onDismiss) { Text("Cancel") } }
+                    Spacer(Modifier.width(8.dp))
+                    ScNavItem(pkNav, applyLine, 2, onActivate = doApply) { Button(onClick = doApply) { Text("Apply") } }
+                }
             }
         },
+        confirmButton = {},
     )
 }
 
@@ -715,12 +865,18 @@ private val MODIFIER_KEYS: List<Pair<String, String>> = listOf(
 
 /** A row of multi-selectable modifier chips; [selected] is the set of chosen modifier key names. */
 @Composable
-private fun ModifierRow(selected: Set<String>, onToggle: (String) -> Unit) {
+private fun ModifierRow(selected: Set<String>, nav: ScNavState? = null, baseLine: Int = 0, onToggle: (String) -> Unit) {
     Column {
         Text("Modifiers (held with the key)", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         CmdFlow {
-            MODIFIER_KEYS.forEach { (name, label) ->
-                CmdChip(label, selected = name in selected) { onToggle(name) }
+            MODIFIER_KEYS.forEachIndexed { i, mk ->
+                val name = mk.first
+                val toggle = { onToggle(name) }
+                if (nav != null) {
+                    ScNavItem(nav, baseLine, i, onActivate = toggle) { CmdChip(mk.second, selected = name in selected, onClick = toggle) }
+                } else {
+                    CmdChip(mk.second, selected = name in selected, onClick = toggle)
+                }
             }
         }
     }
@@ -742,7 +898,8 @@ private fun initialTab(b: EditBinding): CmdTab = when (b.kind) {
 
 @Composable
 private fun CmdTabRow(tabs: List<CmdTab>, tab: CmdTab, onSelect: (CmdTab) -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        BumperHint("LB")
         tabs.forEach { t ->
             val sel = t == tab
             Box(
@@ -762,6 +919,20 @@ private fun CmdTabRow(tabs: List<CmdTab>, tab: CmdTab, onSelect: (CmdTab) -> Uni
                 )
             }
         }
+        BumperHint("RB")
+    }
+}
+
+/** A small bumper badge (LB/RB) flanking the tab row, signalling the bumpers switch tabs (controller-UI convention). */
+@Composable
+private fun BumperHint(label: String) {
+    Box(
+        Modifier
+            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
     }
 }
 
@@ -775,12 +946,17 @@ private fun CmdFlow(content: @Composable () -> Unit) {
 /** Render keyboard-style rows of key chips; [selected] is the highlighted XKeycode name (or null). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun KeyGrid(rows: List<List<XKeycode>>, selected: String?, onPick: (String) -> Unit) {
+private fun KeyGrid(rows: List<List<XKeycode>>, selected: String?, nav: ScNavState? = null, baseLine: Int = 0, onPick: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        rows.forEach { row ->
+        rows.forEachIndexed { r, row ->
             FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                row.forEach { k ->
-                    CmdChip(keyLabel(k), selected = selected == k.name) { onPick(k.name) }
+                row.forEachIndexed { c, k ->
+                    val pick = { onPick(k.name) }
+                    if (nav != null) {
+                        ScNavItem(nav, baseLine + r, c, onActivate = pick) { CmdChip(keyLabel(k), selected = selected == k.name, onClick = pick) }
+                    } else {
+                        CmdChip(keyLabel(k), selected = selected == k.name, onClick = pick)
+                    }
                 }
             }
         }
@@ -858,16 +1034,31 @@ private fun <T> LabeledDropdown(
     label: String,
     options: List<Pair<T, String>>,
     selected: T,
+    /** Optional d-pad nav: the trigger becomes a nav cell that CYCLES to the next option on A (a DropdownMenu popup is
+     *  a separate window the controller-nav bridge can't reach, so cycling in-place is the d-pad-friendly path). Touch
+     *  still opens the full menu. */
+    nav: ScNavState? = null,
+    navLine: Int = 0,
     onSelected: (T) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var choosing by remember { mutableStateOf(false) }
     val selectedLabel = options.firstOrNull { it.first == selected }?.second ?: "—"
     Column {
         Text(label, style = MaterialTheme.typography.labelMedium)
         Box {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(selectedLabel, modifier = Modifier.weight(1f))
-                Text("▾")
+            // With nav: tapping/A opens a controller-navigable choice modal (shows all options). Without: a Material popup.
+            val open = { if (nav != null) choosing = true else expanded = true }
+            val trigger: @Composable () -> Unit = {
+                OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth()) {
+                    Text(selectedLabel, modifier = Modifier.weight(1f))
+                    Text("▾")
+                }
+            }
+            if (nav != null) {
+                ScNavItem(nav, navLine, modifier = Modifier.fillMaxWidth(), onActivate = open) { trigger() }
+            } else {
+                trigger()
             }
             DropdownMenu(
                 expanded = expanded,
@@ -882,6 +1073,15 @@ private fun <T> LabeledDropdown(
                 }
             }
         }
+    }
+    if (choosing) {
+        ScNavChoiceDialog(
+            title = label,
+            options = options,
+            selected = selected,
+            onPick = onSelected,
+            onDismiss = { choosing = false },
+        )
     }
 }
 
@@ -1043,6 +1243,7 @@ private fun AnalogPickerDialog(
         slots = slots, menuCols = menuCols, menuRows = menuRows, menuOnClick = menuOnClick,
         menuHold = menuHold, menuCenter = menuCenter, menuDirectional = menuDirectional,
     )
+    val nav = remember { ScNavState() }
 
     AlertDialog(
         modifier = Modifier.fillMaxWidth(0.95f),
@@ -1050,62 +1251,73 @@ private fun AnalogPickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("${surface.label} behavior") },
         text = {
-            Column(modifier = Modifier.heightIn(max = 520.dp).verticalScrollWithBar()) {
-                ScNavDialogCapture(onBack = onDismiss)
-                LabeledDropdown("Behavior", modeOptions, modeKey) { modeKey = it }
-                if (showSens) { Spacer(Modifier.height(8.dp)); AnalogSlider("Sensitivity", sens, 25, 400, "%") { sens = it } }
-                if (showDead) { Spacer(Modifier.height(8.dp)); AnalogSlider("Deadzone", dead, 0, 50, "%") { dead = it } }
-                if (mode == AnalogMode.SCROLL_WHEEL) { Spacer(Modifier.height(8.dp)); AnalogSlider("Scroll step", scrollStep, 1000, 12000, "") { scrollStep = it } }
-                if (mode == AnalogMode.JOYSTICK) { Spacer(Modifier.height(8.dp)); LabeledDropdown("Output stick", listOf("LEFT" to "Left stick", "RIGHT" to "Right stick"), outStick) { outStick = it } }
-                if (showCurve) { Spacer(Modifier.height(8.dp)); LabeledDropdown("Response curve", EditCurve.entries.map { it to it.name.lowercase().replaceFirstChar { c -> c.uppercase() } }, curve) { curve = it } }
-                if (showInvert) { Spacer(Modifier.height(8.dp)); AnalogToggle("Invert Y", invertY) { invertY = it } }
+            val doApply = { if (modeKey == inherit) onApply(null) else onApply(build()) }
+            ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.heightIn(max = 520.dp).verticalScrollWithBar()) {
+                LabeledDropdown("Behavior", modeOptions, modeKey, nav = nav, navLine = 0) { modeKey = it }
+                if (showSens) { Spacer(Modifier.height(8.dp)); AnalogSlider("Sensitivity", sens, 25, 400, "%", nav = nav, navLine = 1) { sens = it } }
+                if (showDead) { Spacer(Modifier.height(8.dp)); AnalogSlider("Deadzone", dead, 0, 50, "%", nav = nav, navLine = 2) { dead = it } }
+                if (mode == AnalogMode.SCROLL_WHEEL) { Spacer(Modifier.height(8.dp)); AnalogSlider("Scroll step", scrollStep, 1000, 12000, "", nav = nav, navLine = 3) { scrollStep = it } }
+                if (mode == AnalogMode.JOYSTICK) { Spacer(Modifier.height(8.dp)); LabeledDropdown("Output stick", listOf("LEFT" to "Left stick", "RIGHT" to "Right stick"), outStick, nav = nav, navLine = 4) { outStick = it } }
+                if (showCurve) { Spacer(Modifier.height(8.dp)); LabeledDropdown("Response curve", EditCurve.entries.map { it to it.name.lowercase().replaceFirstChar { c -> c.uppercase() } }, curve, nav = nav, navLine = 5) { curve = it } }
+                if (showInvert) { Spacer(Modifier.height(8.dp)); AnalogToggle("Invert Y", invertY, nav = nav, navLine = 6) { invertY = it } }
 
                 // ── D-Pad: four direction binds ──
                 if (mode == AnalogMode.DPAD) {
                     Spacer(Modifier.height(8.dp))
-                    DetailRow("Up", summarize(dUp)) { editingDir = "UP" }
-                    DetailRow("Down", summarize(dDown)) { editingDir = "DOWN" }
-                    DetailRow("Left", summarize(dLeft)) { editingDir = "LEFT" }
-                    DetailRow("Right", summarize(dRight)) { editingDir = "RIGHT" }
+                    val dirs = listOf("UP" to dUp, "DOWN" to dDown, "LEFT" to dLeft, "RIGHT" to dRight)
+                    dirs.forEachIndexed { i, (dir, b) ->
+                        val open = { editingDir = dir }
+                        ScNavItem(nav, 7 + i, modifier = Modifier.fillMaxWidth(), onActivate = open) {
+                            DetailRow(dir.lowercase().replaceFirstChar { it.uppercase() }, summarize(b), open)
+                        }
+                    }
                 }
 
                 // ── Menus: grid dims + commit/onClick + slot list (+ radial center/directional) ──
                 if (isMenu) {
                     Spacer(Modifier.height(8.dp))
                     if (isGrid) {
-                        AnalogSlider("Columns", menuCols, 1, 6, "") { menuCols = it }
-                        AnalogSlider("Rows", menuRows, 1, 6, "") { menuRows = it }
+                        AnalogSlider("Columns", menuCols, 1, 6, "", nav = nav, navLine = 11) { menuCols = it }
+                        AnalogSlider("Rows", menuRows, 1, 6, "", nav = nav, navLine = 12) { menuRows = it }
                     }
                     if (mode != AnalogMode.BUTTON_PAD) {
-                        AnalogToggle("Hold (else commit on release)", menuHold) { menuHold = it }
+                        AnalogToggle("Hold (else commit on release)", menuHold, nav = nav, navLine = 13) { menuHold = it }
                     }
-                    if (!surface.isStick) AnalogToggle("Commit on pad click", menuOnClick) { menuOnClick = it }
+                    if (!surface.isStick) AnalogToggle("Commit on pad click", menuOnClick, nav = nav, navLine = 14) { menuOnClick = it }
                     if (mode == AnalogMode.RADIAL) {
-                        AnalogToggle("Directional (8-way movement)", menuDirectional) { menuDirectional = it }
-                        DetailRow("Center button", menuCenter?.let { summarize(it.binding) } ?: "None") { editingSlot = -1 }
+                        AnalogToggle("Directional (8-way movement)", menuDirectional, nav = nav, navLine = 15) { menuDirectional = it }
+                        val openCenter = { editingSlot = -1 }
+                        ScNavItem(nav, 16, modifier = Modifier.fillMaxWidth(), onActivate = openCenter) {
+                            DetailRow("Center button", menuCenter?.let { summarize(it.binding) } ?: "None", openCenter)
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(if (mode == AnalogMode.BUTTON_PAD) "Cells (row-major)" else "Slots", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     slots.forEachIndexed { i, s ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("${i + 1}.", modifier = Modifier.width(24.dp), style = MaterialTheme.typography.bodyMedium)
-                            Box(Modifier.weight(1f).clickable { editingSlot = i }) {
-                                Text(
-                                    (s.label.ifBlank { "(no label)" }) + " — " + summarize(s.binding),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
+                            val editSlot = { editingSlot = i }
+                            val removeSlot = { slots = slots.toMutableList().also { it.removeAt(i) } }
+                            ScNavItem(nav, 20 + i, col = 0, modifier = Modifier.weight(1f), onActivate = editSlot) {
+                                Box(Modifier.fillMaxWidth().clickable { editSlot() }) {
+                                    Text(
+                                        (s.label.ifBlank { "(no label)" }) + " — " + summarize(s.binding),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
                             }
-                            TextButton(onClick = { slots = slots.toMutableList().also { it.removeAt(i) } }) { Text("✕") }
+                            ScNavItem(nav, 20 + i, col = 1, onActivate = removeSlot) { TextButton(onClick = removeSlot) { Text("✕") } }
                         }
                     }
-                    TextButton(onClick = { slots = slots + EditMenuSlot() }) { Text("+ Add ${if (mode == AnalogMode.BUTTON_PAD) "cell" else "slot"}") }
+                    val addSlot = { slots = slots + EditMenuSlot() }
+                    ScNavItem(nav, 999, modifier = Modifier.fillMaxWidth(), onActivate = addSlot) {
+                        TextButton(onClick = addSlot) { Text("+ Add ${if (mode == AnalogMode.BUTTON_PAD) "cell" else "slot"}") }
+                    }
                 }
+                NavApplyCancelRow(nav, onApply = doApply, onCancel = onDismiss)
             }
         },
-        confirmButton = {
-            TextButton(onClick = { if (modeKey == inherit) onApply(null) else onApply(build()) }) { Text("Apply") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {},
     )
 
     // Nested command picker for a slot / the radial center / a d-pad direction.
@@ -1154,9 +1366,11 @@ private fun SlotPickerDialog(
         onApply = { b -> onApply(b, label) },
         headerContent = if (showLabel) {
             {
-                OutlinedTextField(
-                    value = label, onValueChange = { label = it }, label = { Text("Slot label (HUD)") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                ScTextEditField(
+                    label = "Slot label (HUD)",
+                    value = label,
+                    onValueChange = { label = it },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                 )
             }
         } else null,
@@ -1164,18 +1378,60 @@ private fun SlotPickerDialog(
 }
 
 @Composable
-private fun AnalogSlider(label: String, value: Int, min: Int, max: Int, suffix: String, onChange: (Int) -> Unit) {
-    Column {
-        Text("$label: $value$suffix", style = MaterialTheme.typography.labelMedium)
-        Slider(value = value.toFloat(), onValueChange = { onChange(it.toInt()) }, valueRange = min.toFloat()..max.toFloat())
+private fun AnalogSlider(
+    label: String,
+    value: Int,
+    min: Int,
+    max: Int,
+    suffix: String,
+    nav: ScNavState? = null,
+    navLine: Int = 0,
+    onChange: (Int) -> Unit,
+) {
+    // With nav: d-pad LEFT/RIGHT nudge the value 1 point at a time (hold to auto-repeat for larger ranges).
+    val nudge: (Int) -> Unit = { d -> onChange((value + d).coerceIn(min, max)) }
+    val body: @Composable () -> Unit = {
+        Column {
+            Text("$label: $value$suffix" + if (nav != null) "   ◀ ▶" else "", style = MaterialTheme.typography.labelMedium)
+            Slider(value = value.toFloat(), onValueChange = { onChange(it.toInt()) }, valueRange = min.toFloat()..max.toFloat())
+        }
+    }
+    if (nav != null) {
+        ScNavItem(nav, navLine, modifier = Modifier.fillMaxWidth(), onHorizontal = nudge, onActivate = {}) { body() }
+    } else {
+        body()
     }
 }
 
 @Composable
-private fun AnalogToggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        OutlinedButton(onClick = { onChange(!value) }) { Text(if (value) "On" else "Off") }
+private fun AnalogToggle(label: String, value: Boolean, nav: ScNavState? = null, navLine: Int = 0, onChange: (Boolean) -> Unit) {
+    val toggle = { onChange(!value) }
+    val body: @Composable () -> Unit = {
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(onClick = toggle) { Text(if (value) "On" else "Off") }
+        }
+    }
+    if (nav != null) {
+        ScNavItem(nav, navLine, modifier = Modifier.fillMaxWidth(), onActivate = toggle) { body() }
+    } else {
+        body()
+    }
+}
+
+/** The standard d-pad-navigable Cancel/Apply row at the bottom of an SC sub-dialog's nav column (always the last line). */
+@Composable
+private fun NavApplyCancelRow(nav: ScNavState, onApply: () -> Unit, onCancel: () -> Unit) {
+    Spacer(Modifier.height(12.dp))
+    HorizontalDivider()
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ScNavItem(nav, 9999, 0, onActivate = onCancel) { TextButton(onClick = onCancel) { Text("Cancel") } }
+        Spacer(Modifier.width(8.dp))
+        ScNavItem(nav, 9999, 1, onActivate = onApply) { Button(onClick = onApply) { Text("Apply") } }
     }
 }
 

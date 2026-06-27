@@ -24,20 +24,34 @@ import androidx.compose.ui.unit.dp
 fun Modifier.verticalScrollbar(
     state: ScrollState,
     color: Color,
-    width: Dp = 4.dp,
+    trackColor: Color,
+    width: Dp = 8.dp,
 ): Modifier = this.drawWithContent {
     drawContent()
     if (state.maxValue <= 0) return@drawWithContent
     val viewport = size.height
     val total = viewport + state.maxValue            // full content height (visible + scrolled-off)
-    val thumbH = (viewport * (viewport / total)).coerceAtLeast(24.dp.toPx())
+    // Browser-style proportional thumb: its height = the visible fraction of the content (small when there's a lot
+    // below, large when there's little). Capped at 85% so a sliver of track is ALWAYS visible above + below it — that
+    // gap is what makes the thumb read as a distinct floating handle rather than a uniform bar.
+    val thumbH = (viewport * (viewport / total)).coerceIn(24.dp.toPx(), viewport * 0.85f)
     val maxOffset = viewport - thumbH
     val offset = maxOffset * (state.value.toFloat() / state.maxValue)
     val w = width.toPx()
+    val x = size.width - w
+    // Faint full-height gutter track.
+    drawRoundRect(
+        color = trackColor,
+        topLeft = Offset(x, 0f),
+        size = Size(w, viewport),
+        cornerRadius = CornerRadius(w / 2f, w / 2f),
+    )
+    // Solid thumb, inset 1px from the gutter edges so it reads as a handle sitting inside the track.
+    val inset = 1.dp.toPx()
     drawRoundRect(
         color = color,
-        topLeft = Offset(size.width - w, offset),
-        size = Size(w, thumbH),
+        topLeft = Offset(x + inset, offset + inset),
+        size = Size(w - 2 * inset, thumbH - 2 * inset),
         cornerRadius = CornerRadius(w / 2f, w / 2f),
     )
 }
@@ -50,6 +64,8 @@ fun Modifier.verticalScrollbar(
 @Composable
 fun Modifier.verticalScrollWithBar(): Modifier {
     val state = rememberScrollState()
-    val color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-    return this.verticalScroll(state).verticalScrollbar(state, color)
+    // Solid neutral thumb on a faint gutter — a conventional browser-style scrollbar.
+    val thumb = MaterialTheme.colorScheme.onSurfaceVariant
+    val track = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f)
+    return this.verticalScroll(state).verticalScrollbar(state, thumb, track)
 }

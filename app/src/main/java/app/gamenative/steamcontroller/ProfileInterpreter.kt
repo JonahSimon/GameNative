@@ -104,6 +104,13 @@ class ProfileInterpreter(
     }
 
     private companion object {
+        /** Pad-mouse cursor tuning for menu/editor capture: raw-unit rest deadzone + pad-units→pixels gain. */
+        const val NAV_CURSOR_FLOOR = 80f
+        const val NAV_CURSOR_GAIN = 0.06f
+        const val NAV_CURSOR_TICK_PX = 36f
+        /** Held-d-pad menu nav auto-repeat: initial delay, then per-step interval (ms). */
+        const val NAV_REPEAT_DELAY_MS = 400L
+        const val NAV_REPEAT_INTERVAL_MS = 130L
         /** 8-way arrow labels for a directional (movement) radial, clockwise from top — matches the ring order. */
         val ARROW8 = listOf("↑", "↗", "→", "↘", "↓", "↙", "←", "↖")
         /** Bare XKeycode name (minus "KEY_") → its glyph, for compact overlay slot labels. */
@@ -176,6 +183,17 @@ class ProfileInterpreter(
     private val rightStickMenu = MenuRuntime()
     private val leftPad = PadRuntime()
     private val rightPad = PadRuntime()
+
+    // Pad-mouse cursor state while a menu/editor is captured: the RIGHT trackpad drives an on-screen cursor over the
+    // Compose dialog (right-pad click = tap). Trailing-anchor deadzone mirrors [applyPadMouse] to kill rest jitter.
+    private var navCursorActive = false
+    private var navCursorAnchorX = 0
+    private var navCursorAnchorY = 0
+    private var navCursorAccumX = 0f
+    private var navCursorAccumY = 0f
+    private val navClickGain = HapticSettings().clickGain
+    private val navTickGain = HapticSettings().tickGain
+    private var navCursorTickAccum = 0f
 
     fun apply(s: TritonState) {
         // GameNative's QuickMenu / in-game editors take over the controller while up: translate movement + buttons
@@ -306,21 +324,23 @@ class ProfileInterpreter(
      *  left-stick (edge-triggered into a direction) move focus, A selects, B / Steam go back. Never touches the
      *  game output. */
     private fun handleMenuNav(s: TritonState) {
-        if (rising(s, TritonProtocol.BTN_DPAD_UP)) uiBridge.nav(ScNavKey.UP)
-        if (rising(s, TritonProtocol.BTN_DPAD_DOWN)) uiBridge.nav(ScNavKey.DOWN)
-        if (rising(s, TritonProtocol.BTN_DPAD_LEFT)) uiBridge.nav(ScNavKey.LEFT)
-        if (rising(s, TritonProtocol.BTN_DPAD_RIGHT)) uiBridge.nav(ScNavKey.RIGHT)
-
-        // Left stick as a d-pad: emit once when it crosses into a new dominant direction (debounced via [navStickDir]).
-        val dir = stickNavDir(s.leftStickX, s.leftStickY)
-        if (dir != navStickDir) {
-            navStickDir = dir
-            when (dir) {
-                1 -> uiBridge.nav(ScNavKey.UP)
-                2 -> uiBridge.nav(ScNavKey.DOWN)
-                3 -> uiBridge.nav(ScNavKey.LEFT)
-                4 -> uiBridge.nav(ScNavKey.RIGHT)
+        val now = clock()
+        // The currently-held nav direction comes from the d-pad bits, else the left stick deflection. Holding a
+        // direction auto-repeats (initial [NAV_REPEAT_DELAY_MS], then every [NAV_REPEAT_INTERVAL_MS]) so the user can
+        // hold to scroll a long list instead of tapping per item.
+        val dir: ScNavKey? = when {
+            (s.buttons and TritonProtocol.BTN_DPAD_UP) != 0 -> ScNavKey.UP
+            (s.buttons and TritonProtocol.BTN_DPAD_DOWN) != 0 -> ScNavKey.DOWN
+            (s.buttons and TritonProtocol.BTN_DPAD_LEFT) != 0 -> ScNavKey.LEFT
+            (s.buttons and TritonProtocol.BTN_DPAD_RIGHT) != 0 -> ScNavKey.RIGHT
+            else -> when (stickNavDir(s.leftStickX, s.leftStickY)) {
+                1 -> ScNavKey.UP; 2 -> ScNavKey.DOWN; 3 -> ScNavKey.LEFT; 4 -> ScNavKey.RIGHT; else -> null
             }
+        }
+        when {
+            dir == null -> navHeldDir = null
+            dir != navHeldDir -> { navHeldDir = dir; uiBridge.nav(dir); navRepeatAt = now + NAV_REPEAT_DELAY_MS }
+            now >= navRepeatAt -> { uiBridge.nav(dir); navRepeatAt = now + NAV_REPEAT_INTERVAL_MS }
         }
 
         if (rising(s, TritonProtocol.BTN_A)) uiBridge.nav(ScNavKey.SELECT)
@@ -328,6 +348,49 @@ class ProfileInterpreter(
         // Bumpers flip between command-picker tabs (Keyboard / Numpad / Mouse / Gamepad / …).
         if (rising(s, TritonProtocol.BTN_LBUMPER)) uiBridge.nav(ScNavKey.TAB_PREV)
         if (rising(s, TritonProtocol.BTN_RBUMPER)) uiBridge.nav(ScNavKey.TAB_NEXT)
+
+        // Right trackpad = pad-mouse cursor over the dialog (the additive Steam-Controller nav option). Runs alongside
+        // d-pad nav so either works; complex editor screens are usable by pointing + clicking instead of tab-focusing.
+        handleMenuCursor(s)
+    }
+
+    private fun handleMenuCursor(s: TritonState) {
+        val touched = (s.buttons and TritonProtocol.BTN_RPAD_TOUCH) != 0
+        if (!touched) {
+            navCursorActive = false
+        } else if (!navCursorActive) {
+            navCursorActive = true
+            navCursorAnchorX = s.rightPadX; navCursorAnchorY = s.rightPadY
+            navCursorAccumX = 0f; navCursorAccumY = 0f
+        } else {
+            val dxRaw = (s.rightPadX - navCursorAnchorX).toFloat()
+            val dyRaw = (s.rightPadY - navCursorAnchorY).toFloat()
+            val dist = hypot(dxRaw, dyRaw)
+            if (dist >= NAV_CURSOR_FLOOR) {
+                val ux = dxRaw / dist; val uy = dyRaw / dist
+                navCursorAnchorX = (s.rightPadX - ux * NAV_CURSOR_FLOOR).roundToInt()
+                navCursorAnchorY = (s.rightPadY - uy * NAV_CURSOR_FLOOR).roundToInt()
+                val over = dist - NAV_CURSOR_FLOOR
+                navCursorAccumX += ux * over * NAV_CURSOR_GAIN
+                navCursorAccumY += -uy * over * NAV_CURSOR_GAIN // pad +Y is up; screen +Y is down
+                val dx = navCursorAccumX.toInt(); val dy = navCursorAccumY.toInt()
+                if (dx != 0 || dy != 0) {
+                    uiBridge.moveCursor(dx, dy)
+                    navCursorAccumX -= dx; navCursorAccumY -= dy
+                    // Detent ticks as the cursor travels (reuse the keyboard's per-cell tick) so dragging feels like a
+                    // textured surface, not a dead glide — one tick every [NAV_CURSOR_TICK_PX] pixels of travel.
+                    navCursorTickAccum += hypot(dx.toFloat(), dy.toFloat())
+                    if (navCursorTickAccum >= NAV_CURSOR_TICK_PX) {
+                        navCursorTickAccum %= NAV_CURSOR_TICK_PX
+                        haptics?.tick(1, navTickGain)
+                    }
+                }
+            }
+        }
+        if (rising(s, TritonProtocol.BTN_RPAD_CLICK)) {
+            uiBridge.cursorTap()
+            haptics?.click(1, navClickGain) // right pad (side 1) — a real "click" feel so you can tell it registered
+        }
     }
 
     /** Dominant left-stick direction past a deadzone: 0=none, 1=up, 2=down, 3=left, 4=right. Stick axes are s16
@@ -337,7 +400,8 @@ class ProfileInterpreter(
         if (abs(x) < t && abs(y) < t) return 0
         return if (abs(y) >= abs(x)) { if (y > 0) 1 else 2 } else { if (x < 0) 3 else 4 }
     }
-    private var navStickDir = 0
+    private var navHeldDir: ScNavKey? = null
+    private var navRepeatAt = 0L
 
     /**
      * Config-driven action-set switching: a [ScOutput.SwitchActionSet] binding swaps the active [profile] when
