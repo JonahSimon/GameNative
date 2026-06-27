@@ -129,6 +129,10 @@ android {
             isDebuggable = true
             isMinifyEnabled = false
             isShrinkResources = false
+            // NOTE: no applicationIdSuffix. The native evshim + prebuilt proton binaries hardcode
+            // /data/data/app.gamenative/... paths, so a ".debug" suffix breaks Wine/container launch
+            // (kernel32.dll c0000135). The build must be the real package id to run games. Trade-off:
+            // it can't sit side-by-side with an official-key-signed install (uninstall that first).
             signingConfig = signingConfigs.getByName("debug")
         }
         release {

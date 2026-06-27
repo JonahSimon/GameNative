@@ -1,0 +1,831 @@
+package app.gamenative.steamcontroller
+
+import com.winlator.inputcontrols.GamepadState
+import com.winlator.xserver.Pointer
+import com.winlator.xserver.XKeycode
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.roundToInt
+
+/**
+ * Applies a [ScProfile] to each decoded [TritonState], driving an [ScOutputSink] (virtual XInput pad +
+ * mouse/keys). This is the profile-driven replacement for the old hardcoded TritonMapper.applyState; with
+ * [ScProfile.default] it behaves identically. The [profile] is swappable at runtime (future: action-set
+ * switching). The sink seam makes the whole engine unit-testable headlessly (see ProfileInterpreterTest).
+ */
+class ProfileInterpreter(
+    private val sink: ScOutputSink,
+    @Volatile var profile: ScProfile,
+    private val haptics: TritonHaptics?,
+    /** Time source (ms) for activator timing; override in tests with a virtual clock. */
+    private val clock: () -> Long = { System.currentTimeMillis() },
+    /** Step-6 menu HUD sink; defaults to a no-op so the engine runs headless. */
+    private val menuOverlay: ScMenuOverlay = NoOpScMenuOverlay,
+    /** Split-trackpad keyboard HUD sink; defaults to a no-op. */
+    keyboardOverlay: ScKeyboardOverlay = NoOpScKeyboardOverlay,
+    /** Global "Touchpad deadzone" override (resting-finger freeze radius) for relative-mouse pads; null = use each
+     *  [PadMode.Mouse]'s own jitterFloor. Set from [ScTuningStore] by the live driver. */
+    padDeadzone: Int? = null,
+    /** Global "Touchpad smoothing" (0–100) low-pass for pad-mouse motion + the keyboard cursor. 0 = off. */
+    padSmoothing: Int = 0,
+    /** Global touch/radial-menu commit-style override (see [ScTuningStore.MENU_COMMIT_IMPORTED] etc.). IMPORTED
+     *  honors each menu's own `requires_click`; CLICK/RELEASE force commit-on-click / commit-on-release. */
+    menuCommit: Int = ScTuningStore.MENU_COMMIT_IMPORTED,
+    /** App-UI seam: open the QuickMenu + navigate it (and the in-game editors) from the controller. No-op when
+     *  headless / no overlay is attached, so unit tests and the engine-only path are unaffected. */
+    private val uiBridge: ScUiBridge = NoOpScUiBridge,
+) {
+    // @Volatile so an in-game edit (TritonMapper.reload) can switch commit style live.
+    @Volatile private var menuCommit: Int = menuCommit
+    fun setMenuCommit(value: Int) { menuCommit = value }
+    // Mutable + @Volatile so the debug live-tune path (TritonMapper.setTuning) can retune feel mid-game from the
+    // binder thread while the input loop reads these per report — no relaunch needed for dial-in.
+    @Volatile private var padDeadzone: Int? = padDeadzone
+    @Volatile private var padSmoothing: Int = padSmoothing
+
+    /** Split on-screen keyboard; takes over the pads while open (toggled by a [ScOutput.ShowKeyboard] binding). */
+    private val keyboard = ScKeyboard(sink, keyboardOverlay, haptics, clock, padSmoothing)
+
+    /** Live dial-in of the two touchpad-feel knobs (debug; via [TritonMapper.setTuning]); also retunes the
+     *  keyboard cursor low-pass so one knob still governs both surfaces. */
+    fun setPadTuning(deadzone: Int?, smoothing: Int) {
+        padDeadzone = deadzone
+        padSmoothing = smoothing
+        keyboard.setSmoothing(smoothing)
+    }
+    /** Push the active menu to the overlay HUD; never let a UI error break input. [directional] = a movement radial
+     *  whose 8 ring slots show 8-way arrows instead of their bound key; [center] = the radial's center button. */
+    private fun pushMenu(
+        kind: ScMenuSpec.Kind, slots: List<MenuSlot>, cols: Int, rows: Int, highlighted: Int,
+        center: MenuSlot? = null, directional: Boolean = false,
+        cursorX: Float = Float.NaN, cursorY: Float = Float.NaN,
+    ) {
+        // Directional (movement) radials default to 8-way arrows, but a per-slot CUSTOM label always wins (so a
+        // user can override the default arrow/key name). Non-directional menus use the config/key label.
+        val labels = if (directional && slots.size == ARROW8.size) {
+            slots.mapIndexed { i, s -> s.label.ifBlank { ARROW8[i] } }
+        } else slots.map { slotLabel(it) }
+        runCatching {
+            menuOverlay.showMenu(ScMenuSpec(kind, labels, cols, rows, highlighted, center?.let { slotLabel(it) }, cursorX, cursorY))
+        }
+    }
+
+    /** Overlay text for a menu slot: the config's label, or — when blank (e.g. ToME4's movement radial) — the
+     *  bound key/output so the slot still shows what it does. */
+    private fun slotLabel(slot: MenuSlot): String =
+        slot.label.ifBlank { shortOutputName(slot.binding.output) }
+
+    private fun shortOutputName(out: ScOutput?): String = when (out) {
+        is ScOutput.Key -> out.keys.joinToString("+") { shortKeyName(it) }
+        is ScOutput.MouseButton -> when (out.button) {
+            Pointer.Button.BUTTON_LEFT -> "L-Click"
+            Pointer.Button.BUTTON_RIGHT -> "R-Click"
+            Pointer.Button.BUTTON_MIDDLE -> "M-Click"
+            Pointer.Button.BUTTON_SCROLL_UP -> "Scroll↑"
+            Pointer.Button.BUTTON_SCROLL_DOWN -> "Scroll↓"
+            else -> "Mouse"
+        }
+        else -> ""
+    }
+
+    /** Compact key name for the overlay: arrows as glyphs, numpad as "Num N", punctuation as its symbol, else
+     *  the bare key name. */
+    private fun shortKeyName(k: XKeycode): String {
+        val n = k.name.removePrefix("KEY_")
+        PUNCT[n]?.let { return it }
+        return when {
+            n == "UP" -> "↑"
+            n == "DOWN" -> "↓"
+            n == "LEFT" -> "←"
+            n == "RIGHT" -> "→"
+            n.startsWith("KP_") -> "Num " + n.removePrefix("KP_")
+            else -> n
+        }
+    }
+
+    private companion object {
+        /** 8-way arrow labels for a directional (movement) radial, clockwise from top — matches the ring order. */
+        val ARROW8 = listOf("↑", "↗", "→", "↘", "↓", "↙", "←", "↖")
+        /** Bare XKeycode name (minus "KEY_") → its glyph, for compact overlay slot labels. */
+        val PUNCT = mapOf(
+            "MINUS" to "-", "EQUAL" to "=", "COMMA" to ",", "PERIOD" to ".", "SLASH" to "/",
+            "BACKSLASH" to "\\", "SEMICOLON" to ";", "APOSTROPHE" to "'", "GRAVE" to "`",
+            "BRACKET_LEFT" to "[", "BRACKET_RIGHT" to "]", "SPACE" to "Space", "ENTER" to "⏎",
+            "TAB" to "Tab", "ESC" to "Esc", "BKSP" to "⌫",
+        )
+    }
+    private fun hideMenu() { runCatching { menuOverlay.hideMenu() } }
+    private val gp = GamepadState()
+    private var prevButtons = 0
+
+    /** Optional multi-set config. When installed, [ScOutput.SwitchActionSet] bindings swap [profile] live. */
+    @Volatile var config: ScConfig? = null
+        private set
+    /** The Steam preset id of the currently active action set (only meaningful when [config] is installed). */
+    var activeSetId: String? = null
+        private set
+    /** Active action-layer preset ids, base-first; the effective [profile] = active set merged with these. */
+    private val layerStack = ArrayList<String>()
+    /** (button bit, layerId) for `hold_layer` ops: popped when the button is released, tracked by raw bit. */
+    private val heldLayers = ArrayList<Pair<Int, String>>()
+    /** (button bit, source, overlay) for momentary `mode_shift` ops: a single-source overlay active while held. */
+    private val heldShifts = ArrayList<Triple<Int, String, ScProfile>>()
+
+    /** Install (or clear) a multi-action-set config and jump to its default set (no layers). */
+    fun setConfig(cfg: ScConfig?) {
+        config = cfg
+        layerStack.clear(); heldLayers.clear(); heldShifts.clear()
+        if (cfg != null) {
+            activeSetId = cfg.defaultSetId
+            recompute()
+        }
+    }
+
+    /** Rebuild the effective [profile] = active set with each active layer merged over it, in stack order. */
+    private fun recompute() {
+        val cfg = config ?: return
+        var p = cfg.sets[activeSetId] ?: cfg.defaultProfile()
+        for (layerId in layerStack) {
+            val layer = cfg.sets[layerId] ?: continue
+            p = mergeProfiles(p, layer, cfg.setSources[layerId] ?: emptySet())
+        }
+        for ((_, source, overlay) in heldShifts) {   // momentary mode-shifts win on top
+            p = mergeProfiles(p, overlay, setOf(source))
+        }
+        profile = p
+    }
+
+    /** Per-pad runtime state shared by the pad modes (mouse accumulator, active grid cell, scroll accumulator). */
+    private class PadRuntime {
+        var mouseActive = false
+        var lastX = 0
+        var lastY = 0
+        // Sub-pixel remainder for pad-mouse so slow drags aren't lost to integer truncation.
+        var accumX = 0f
+        var accumY = 0f
+        // EMA state for the optional motion low-pass (Touchpad smoothing).
+        var smoothX = 0f
+        var smoothY = 0f
+        var gridCell = -1
+        var scrollAccum = 0
+        var dpadMask = 0
+        /** Radial/Touch menu state for a pad-driven menu. */
+        val menu = MenuRuntime()
+    }
+    private val leftStickMenu = MenuRuntime()
+    private val rightStickMenu = MenuRuntime()
+    private val leftPad = PadRuntime()
+    private val rightPad = PadRuntime()
+
+    fun apply(s: TritonState) {
+        // GameNative's QuickMenu / in-game editors take over the controller while up: translate movement + buttons
+        // into Android focus-nav keys and suppress all game output (the BLE Triton isn't an Android input device,
+        // so this is the only way it can drive those Compose surfaces). Checked first so an open menu always wins.
+        if (uiBridge.isMenuCapturing()) {
+            handleMenuNav(s)
+            prevButtons = s.buttons
+            return
+        }
+
+        // On-screen keyboard takes over the controller while open. The toggle binding ([ScOutput.ShowKeyboard])
+        // is honored even in keyboard mode (so the same button closes it). While open, the pads drive the keyboard
+        // and normal mapping/gamepad output is suppressed.
+        handleKeyboardToggle(s)
+        if (keyboard.active) {
+            keyboard.update(s)
+            prevButtons = s.buttons
+            return
+        }
+
+        // Open the QuickMenu on the press edge of an [ScOutput.OpenQuickMenu] binding (default: Steam button). Once
+        // open, the menu-capture branch above handles navigation; freeze the pad neutral and bail this frame.
+        if (handleOpenQuickMenu(s)) {
+            neutralizeGamepad()
+            prevButtons = s.buttons
+            return
+        }
+
+        handleSetSwitch(s)        // may swap the active set
+        handleLayerOps(s)         // may push/pop action layers; both rebuild the effective `profile`
+        val p = profile
+
+        // ---- level outputs: virtual-pad buttons + d-pad (set every frame from current state) ----
+        for ((bit, b) in p.buttons) {
+            when (val out = b.output) {
+                is ScOutput.GamepadButton -> gp.setPressed(out.idx, s.has(bit))
+                is ScOutput.GamepadDpad -> gp.dpad[out.index] = s.has(bit)
+                else -> {} // edge outputs handled below
+            }
+        }
+        applyStick(p.leftStick, s.leftStickX, s.leftStickY, s.has(TritonProtocol.BTN_L3), s.has(TritonProtocol.BTN_LSTICK_TOUCH), leftStickMenu)
+        applyStick(p.rightStick, s.rightStickX, s.rightStickY, s.has(TritonProtocol.BTN_R3), s.has(TritonProtocol.BTN_RSTICK_TOUCH), rightStickMenu)
+        applyTrigger(p.leftTrigger, s.triggerLeft, leftTrig)
+        applyTrigger(p.rightTrigger, s.triggerRight, rightTrig)
+
+        sink.gamepad(gp)
+
+        // ---- edge outputs (mouse buttons + keys) through their activators ----
+        val now = clock()
+        for ((bit, b) in p.buttons) {
+            when (b.output) {
+                is ScOutput.MouseButton, is ScOutput.Key, is ScOutput.MouseNudge -> applyActivator(bit, b, s, now)
+                else -> {}
+            }
+        }
+
+        // ---- trackpads (mode-driven: mouse / grid / d-pad / scroll) ----
+        applyPad(p.leftPad, leftPad, s, TritonProtocol.BTN_LPAD_TOUCH, TritonProtocol.BTN_LPAD_CLICK, s.leftPadX, s.leftPadY)
+        applyPad(p.rightPad, rightPad, s, TritonProtocol.BTN_RPAD_TOUCH, TritonProtocol.BTN_RPAD_CLICK, s.rightPadX, s.rightPadY)
+
+        // ---- gyro -> mouse aim ----
+        applyGyro(p.gyro, s)
+
+        // ---- regenerate trackpad haptics (profile-driven feel) ----
+        haptics?.update(s, prevButtons, p.haptics)
+
+        prevButtons = s.buttons
+    }
+
+    private fun rising(s: TritonState, bit: Int) = (s.buttons and bit) != 0 && (prevButtons and bit) == 0
+    private fun falling(s: TritonState, bit: Int) = (s.buttons and bit) == 0 && (prevButtons and bit) != 0
+
+    /** Toggle the on-screen keyboard on the press edge of any [ScOutput.ShowKeyboard] binding (honored even while
+     *  the keyboard is open, so the same button closes it). On open, the virtual pad is frozen at neutral. */
+    private fun handleKeyboardToggle(s: TritonState) {
+        var hasBinding = false
+        for ((bit, b) in profile.buttons) {
+            if (b.output is ScOutput.ShowKeyboard) {
+                hasBinding = true
+                if (rising(s, bit)) { toggleKeyboard(); return }
+            }
+        }
+        // Global fallback: if the active profile binds the keyboard nowhere AND the "..." Quick-Access (3-dots)
+        // button is otherwise unbound, let it toggle the keyboard — so per-game .vdf configs that omit
+        // SHOW_KEYBOARD (e.g. ToME4) still get the on-screen keyboard.
+        if (!hasBinding && !profile.buttons.containsKey(TritonProtocol.BTN_QAM) && rising(s, TritonProtocol.BTN_QAM)) {
+            toggleKeyboard()
+        }
+    }
+
+    private fun toggleKeyboard() {
+        if (keyboard.active) {
+            keyboard.deactivate()
+        } else {
+            keyboard.activate()
+            neutralizeGamepad()
+        }
+    }
+
+    /** Freeze the virtual pad at neutral (used when an overlay takes over the controller, so the game sees no
+     *  stuck input while the keyboard / QuickMenu is up). */
+    private fun neutralizeGamepad() {
+        gp.thumbLX = 0f; gp.thumbLY = 0f; gp.thumbRX = 0f; gp.thumbRY = 0f
+        gp.triggerL = 0f; gp.triggerR = 0f; gp.buttons = 0
+        for (i in 0..3) gp.dpad[i] = false
+        sink.gamepad(gp)
+    }
+
+    /** Open the QuickMenu on the press edge of an [ScOutput.OpenQuickMenu] binding (default: Steam button). As a
+     *  global fallback, an otherwise-unbound Steam button opens it too (so .vdf configs still reach the menu).
+     *  Returns true if the menu was opened this frame. */
+    private fun handleOpenQuickMenu(s: TritonState): Boolean {
+        var hasBinding = false
+        for ((bit, b) in profile.buttons) {
+            if (b.output is ScOutput.OpenQuickMenu) {
+                hasBinding = true
+                if (rising(s, bit)) { uiBridge.openQuickMenu(); return true }
+            }
+        }
+        if (!hasBinding && !profile.buttons.containsKey(TritonProtocol.BTN_STEAM) && rising(s, TritonProtocol.BTN_STEAM)) {
+            uiBridge.openQuickMenu(); return true
+        }
+        return false
+    }
+
+    /** While a GameNative menu/editor is captured, translate the controller into Android focus-nav keys: d-pad and
+     *  left-stick (edge-triggered into a direction) move focus, A selects, B / Steam go back. Never touches the
+     *  game output. */
+    private fun handleMenuNav(s: TritonState) {
+        if (rising(s, TritonProtocol.BTN_DPAD_UP)) uiBridge.nav(ScNavKey.UP)
+        if (rising(s, TritonProtocol.BTN_DPAD_DOWN)) uiBridge.nav(ScNavKey.DOWN)
+        if (rising(s, TritonProtocol.BTN_DPAD_LEFT)) uiBridge.nav(ScNavKey.LEFT)
+        if (rising(s, TritonProtocol.BTN_DPAD_RIGHT)) uiBridge.nav(ScNavKey.RIGHT)
+
+        // Left stick as a d-pad: emit once when it crosses into a new dominant direction (debounced via [navStickDir]).
+        val dir = stickNavDir(s.leftStickX, s.leftStickY)
+        if (dir != navStickDir) {
+            navStickDir = dir
+            when (dir) {
+                1 -> uiBridge.nav(ScNavKey.UP)
+                2 -> uiBridge.nav(ScNavKey.DOWN)
+                3 -> uiBridge.nav(ScNavKey.LEFT)
+                4 -> uiBridge.nav(ScNavKey.RIGHT)
+            }
+        }
+
+        if (rising(s, TritonProtocol.BTN_A)) uiBridge.nav(ScNavKey.SELECT)
+        if (rising(s, TritonProtocol.BTN_B) || rising(s, TritonProtocol.BTN_STEAM)) uiBridge.nav(ScNavKey.BACK)
+        // Bumpers flip between command-picker tabs (Keyboard / Numpad / Mouse / Gamepad / …).
+        if (rising(s, TritonProtocol.BTN_LBUMPER)) uiBridge.nav(ScNavKey.TAB_PREV)
+        if (rising(s, TritonProtocol.BTN_RBUMPER)) uiBridge.nav(ScNavKey.TAB_NEXT)
+    }
+
+    /** Dominant left-stick direction past a deadzone: 0=none, 1=up, 2=down, 3=left, 4=right. Stick axes are s16
+     *  (±32767); Y is up-positive on the SC, so up = +Y. */
+    private fun stickNavDir(x: Int, y: Int): Int {
+        val t = 16000
+        if (abs(x) < t && abs(y) < t) return 0
+        return if (abs(y) >= abs(x)) { if (y > 0) 1 else 2 } else { if (x < 0) 3 else 4 }
+    }
+    private var navStickDir = 0
+
+    /**
+     * Config-driven action-set switching: a [ScOutput.SwitchActionSet] binding swaps the active [profile] when
+     * its button hits the matching edge (press, or release for the menu-set's "return" binding). The "hold for
+     * menus" feel is encoded by the config itself (set A enters on press, set B leaves on release), so this stays
+     * stateless. No-op unless an [ScConfig] is installed.
+     */
+    private fun handleSetSwitch(s: TritonState) {
+        val cfg = config ?: return
+        for ((bit, b) in profile.buttons) {
+            val out = b.output
+            if (out is ScOutput.SwitchActionSet) {
+                val fire = if (out.onRelease) falling(s, bit) else rising(s, bit)
+                if (fire && cfg.sets.containsKey(out.targetSetId)) {
+                    activeSetId = out.targetSetId
+                    layerStack.clear(); heldLayers.clear(); heldShifts.clear()  // new set: no layers/shifts
+                    recompute()
+                    runCatching { menuOverlay.toast(cfg.sets[activeSetId]?.name ?: "Set $activeSetId") }
+                }
+            }
+        }
+    }
+
+    /**
+     * Config-driven action **layers**: `add_layer`/`hold_layer`/`remove_layer` bindings ([ScOutput.LayerOp])
+     * push/pop a partial overlay ([mergeProfiles]) over the active set. `hold_layer` is popped on the button's
+     * release — tracked by raw bit so it survives the layer rebinding that button. No-op without an [ScConfig].
+     */
+    private fun handleLayerOps(s: TritonState) {
+        val cfg = config ?: return
+        var changed = false
+        // Pop held layers / mode-shifts whose button was released.
+        val held = heldLayers.iterator()
+        while (held.hasNext()) {
+            val (bit, layerId) = held.next()
+            if (falling(s, bit)) {
+                layerStack.remove(layerId); held.remove(); changed = true
+                // Releasing a hold-layer returns to the base set — pop the OSD title like action-set switching.
+                runCatching { menuOverlay.toast(cfg.sets[activeSetId]?.name ?: "Set $activeSetId") }
+            }
+        }
+        val shifts = heldShifts.iterator()
+        while (shifts.hasNext()) {
+            if (falling(s, shifts.next().first)) { shifts.remove(); changed = true }
+        }
+        // Apply press-edge ops from the current effective profile.
+        for ((bit, b) in profile.buttons) {
+            when (val out = b.output) {
+                is ScOutput.LayerOp -> if (rising(s, bit) && cfg.sets.containsKey(out.layerId)) {
+                    // OSD pop-up mirrors action-set switching: show the layer's name on push, the base set on remove.
+                    fun toastLayer() = runCatching { menuOverlay.toast(cfg.sets[out.layerId]?.name ?: "Layer ${out.layerId}") }
+                    when (out.op) {
+                        LayerOpType.ADD -> if (!layerStack.contains(out.layerId)) { layerStack.add(out.layerId); changed = true; toastLayer() }
+                        LayerOpType.REMOVE -> if (layerStack.remove(out.layerId)) {
+                            changed = true; runCatching { menuOverlay.toast(cfg.sets[activeSetId]?.name ?: "Set $activeSetId") }
+                        }
+                        LayerOpType.HOLD -> if (!layerStack.contains(out.layerId)) {
+                            layerStack.add(out.layerId); heldLayers.add(bit to out.layerId); changed = true; toastLayer()
+                        }
+                    }
+                }
+                is ScOutput.ModeShift -> if (rising(s, bit) && heldShifts.none { it.first == bit }) {
+                    cfg.shiftOverlays[out.groupId]?.let { heldShifts.add(Triple(bit, out.source, it)); changed = true }
+                }
+                else -> {}
+            }
+        }
+        if (changed) recompute()
+    }
+
+    private class ActState {
+        var lastRise = 0L        // DoublePress: time of the first press
+        var awaitSecond = false  // DoublePress: a first press is pending a possible second
+        var downTime = 0L        // LongPress: time the press began
+        var fired = false        // LongPress: threshold reached and output held
+        var lastFire = 0L        // Turbo: time of the last pulse
+        var held = false         // Regular/LongPress: output currently held down
+    }
+    private val actStates = HashMap<Int, ActState>()
+
+    /** Drive an edge output (Key / MouseButton) through its activator's press logic. */
+    private fun applyActivator(bit: Int, b: Binding, s: TritonState, now: Long) {
+        val out = b.output
+        val pressed = s.has(bit)
+        val rose = rising(s, bit)
+        val fell = falling(s, bit)
+        val st = actStates.getOrPut(bit) { ActState() }
+        when (val act = b.activator) {
+            Activator.Regular -> {
+                if (rose) { pressOutput(out); st.held = true }
+                if (fell) { releaseOutput(out); st.held = false }
+            }
+            is Activator.DoublePress -> {
+                if (rose) {
+                    if (st.awaitSecond && now - st.lastRise <= act.windowMs) {
+                        pulse(out); st.awaitSecond = false
+                    } else {
+                        st.lastRise = now; st.awaitSecond = true
+                    }
+                }
+            }
+            is Activator.LongPress -> {
+                if (rose) { st.downTime = now; st.fired = false }
+                if (pressed && !st.fired && now - st.downTime >= act.holdMs) {
+                    pressOutput(out); st.held = true; st.fired = true
+                }
+                if (fell) { if (st.held) { releaseOutput(out); st.held = false }; st.fired = false }
+            }
+            is Activator.Turbo -> {
+                if (rose) { pulse(out); st.lastFire = now }
+                else if (pressed && now - st.lastFire >= act.intervalMs) { pulse(out); st.lastFire = now }
+            }
+            Activator.OnRelease -> {
+                if (fell) pulse(out) // fire a quick pulse when the button is let go
+            }
+        }
+    }
+
+    private fun pulse(out: ScOutput) { pressOutput(out); releaseOutput(out) }
+
+    private fun applyStick(mode: StickMode, rawX: Int, rawY: Int, clicked: Boolean, touched: Boolean, menuRt: MenuRuntime) {
+        when (mode) {
+            is StickMode.RadialMenu -> driveMenu(
+                stickMag(rawX, rawY) >= mode.deadzone, touched, clicked, rawX, rawY,
+                mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, commitOnClick = effectiveCommit(false), menuRt,
+                center = mode.center, directional = mode.directional,
+            )
+            is StickMode.TouchMenu -> driveMenu(
+                stickMag(rawX, rawY) >= mode.deadzone, touched, clicked, rawX, rawY,
+                mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, commitOnClick = effectiveCommit(false), menuRt,
+            )
+            is StickMode.JoystickMove -> {
+                val x = axisCurved(rawX, mode.deadzone, mode.curve)
+                val y = axisCurved(if (mode.invertY) -rawY else rawY, mode.deadzone, mode.curve)
+                if (mode.stick == Stick.LEFT) {
+                    gp.thumbLX = x; gp.thumbLY = y
+                } else {
+                    gp.thumbRX = x; gp.thumbRY = y
+                }
+            }
+            is StickMode.Mouse -> {
+                val x = axisCurved(rawX, mode.deadzone, mode.curve)
+                val y = axisCurved(if (mode.invertY) -rawY else rawY, mode.deadzone, mode.curve)
+                val dx = (x * mode.sensitivity).toInt()
+                val dy = (-y * mode.sensitivity).toInt() // screen Y grows downward
+                if (dx != 0 || dy != 0) sink.mouseMove(dx, dy)
+            }
+            is StickMode.FlickStick -> {
+                // Simplified: horizontal deflection -> yaw mouse velocity (NOT the true flick-and-rotate model).
+                val x = axis(rawX, mode.deadzone)
+                val dx = (x * mode.sensitivity).toInt()
+                if (dx != 0) sink.mouseMove(dx, 0)
+            }
+            StickMode.None -> {}
+        }
+    }
+
+    private class TrigRuntime { var soft = false; var full = false }
+    private val leftTrig = TrigRuntime()
+    private val rightTrig = TrigRuntime()
+
+    private fun applyTrigger(mode: TriggerMode, raw: Int, rt: TrigRuntime) {
+        when (mode) {
+            is TriggerMode.Axis -> setTriggerAxis(mode.axis, raw)
+            is TriggerMode.Staged -> {
+                setTriggerAxis(mode.axis, raw)
+                val v = (raw / 32767f).coerceIn(0f, 1f)
+                val soft = v >= mode.softThreshold
+                val full = v >= mode.fullThreshold
+                if (soft && !rt.soft) pressOutput(mode.soft)
+                if (!soft && rt.soft) releaseOutput(mode.soft)
+                rt.soft = soft
+                if (full && !rt.full) pressOutput(mode.full)
+                if (!full && rt.full) releaseOutput(mode.full)
+                rt.full = full
+            }
+        }
+    }
+
+    private fun setTriggerAxis(axis: TriggerAxis, raw: Int) {
+        val v = (raw / 32767f).coerceIn(0f, 1f)
+        when (axis) {
+            TriggerAxis.GAMEPAD_L2 -> gp.triggerL = v
+            TriggerAxis.GAMEPAD_R2 -> gp.triggerR = v
+            TriggerAxis.NONE -> {}
+        }
+    }
+
+    private fun applyPad(mode: PadMode, rt: PadRuntime, s: TritonState, touchBit: Int, clickBit: Int, x: Int, y: Int) {
+        when (mode) {
+            PadMode.None -> {
+                rt.mouseActive = false; releaseGridCell(mode, rt)
+                if (rt.menu.active) hideMenu()
+                rt.menu.slot = -1; rt.menu.active = false; rt.menu.heldSlot = -1
+            }
+            is PadMode.Mouse -> applyPadMouse(mode, rt, s.has(touchBit), x, y)
+            is PadMode.ButtonPadGrid -> applyPadGrid(mode, rt, s.has(if (mode.onClick) clickBit else touchBit), x, y)
+            is PadMode.DPad -> applyPadDpad(mode, rt, s.has(touchBit), x, y)
+            is PadMode.ScrollWheel -> applyPadScroll(mode, rt, s.has(touchBit), y)
+            is PadMode.RadialMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, effectiveCommit(mode.onClick), rt.menu, center = mode.center, directional = mode.directional)
+            is PadMode.TouchMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, effectiveCommit(mode.onClick), rt.menu)
+        }
+    }
+
+    /** Apply the global menu commit-style override: IMPORTED keeps the menu's own setting ([perMenuOnClick]),
+     *  CLICK forces commit-on-click, RELEASE forces commit-on-(point-and-)release. */
+    private fun effectiveCommit(perMenuOnClick: Boolean): Boolean = when (menuCommit) {
+        ScTuningStore.MENU_COMMIT_CLICK -> true
+        ScTuningStore.MENU_COMMIT_RELEASE -> false
+        else -> perMenuOnClick
+    }
+
+    // ---- shared Radial/Touch menu engine (pad- or stick-driven) ----
+    private class MenuRuntime { var slot = -1; var active = false; var shown = false; var heldSlot = -1; var lastFire = 0L; var committed = false }
+
+    /**
+     * Drive a Radial/Touch menu from any 2D source. [active] = the source is engaged (pad touched / stick deflected
+     * past its deadzone). While active the highlighted slot tracks the position; firing depends on [activation]:
+     * COMMIT = pulse once on click ([commitOnClick]) or on disengage (point-and-release); HOLD = the slot's output
+     * is held while pointed and released when the highlight changes or the source disengages. Pushes the HUD while
+     * active, hides it on disengage.
+     */
+    private fun driveMenu(
+        active: Boolean, shown: Boolean, clicked: Boolean, x: Int, y: Int,
+        slots: List<MenuSlot>, kind: ScMenuSpec.Kind, cols: Int, rows: Int,
+        activation: MenuActivation, commitOnClick: Boolean, rt: MenuRuntime,
+        center: MenuSlot? = null, directional: Boolean = false,
+    ) {
+        if (slots.isEmpty()) { rt.active = active; rt.shown = shown; return }
+        val now = clock()
+        // Cursor dot position for the radial HUD (normalized source position; pads/sticks both report ±32768).
+        val curX = if (kind == ScMenuSpec.Kind.RADIAL) (x / 32768f).coerceIn(-1f, 1f) else Float.NaN
+        val curY = if (kind == ScMenuSpec.Kind.RADIAL) (y / 32768f).coerceIn(-1f, 1f) else Float.NaN
+        if (active) {
+            if (!rt.active) rt.committed = false // fresh engagement
+            rt.slot = when (kind) {
+                ScMenuSpec.Kind.RADIAL -> radialSlot(x, y, slots.size, rt.slot)
+                ScMenuSpec.Kind.GRID -> gridSlot(x, y, cols, rows, slots.size)
+            }
+            when (activation) {
+                MenuActivation.HOLD -> {
+                    // A movement-radial slot with hold_repeats (Activator.Turbo) should *repeat* the key while the
+                    // stick stays pointed (re-pulse every intervalMs, matching Steam's repeat_rate) — some games
+                    // (ToME4) only repeat on discrete presses, not a held key. Slots without it hold continuously.
+                    val turbo = slots.getOrNull(rt.slot)?.binding?.activator as? Activator.Turbo
+                    if (rt.heldSlot != rt.slot) {
+                        releaseHeldIfContinuous(slots, rt.heldSlot) // turbo slots already pulsed (key is up)
+                        rt.heldSlot = rt.slot
+                        if (turbo != null) { pulseSlot(slots, rt.slot); rt.lastFire = now } else pressOutput(slots.getOrNull(rt.slot)?.binding?.output)
+                    } else if (turbo != null && now - rt.lastFire >= turbo.intervalMs) {
+                        pulseSlot(slots, rt.slot); rt.lastFire = now
+                    }
+                }
+                MenuActivation.COMMIT -> {
+                    // Per-slot Turbo (hold_repeats): re-fire while the slot stays pointed, instead of a single
+                    // commit. Non-turbo slots commit immediately on a pad click — even in release-style menus
+                    // (requires_click=0), clicking is always a valid commit (matches Steam) — else on
+                    // point-and-release at disengage (below). [committed] gates the release so click+release
+                    // doesn't double-fire.
+                    val turbo = slots.getOrNull(rt.slot)?.binding?.activator as? Activator.Turbo
+                    if (turbo != null) {
+                        if (rt.heldSlot != rt.slot) { rt.heldSlot = rt.slot; pulseSlot(slots, rt.slot); rt.lastFire = now }
+                        else if (now - rt.lastFire >= turbo.intervalMs) { pulseSlot(slots, rt.slot); rt.lastFire = now }
+                    } else if (clicked && !rt.committed) {
+                        pulseSlot(slots, rt.slot); rt.committed = true
+                    }
+                }
+            }
+            pushMenu(kind, slots, cols, rows, rt.slot, center, directional, curX, curY)
+        } else {
+            // Not engaged (centered / finger lifted). If we WERE engaged, finalize the just-ended deflection.
+            if (rt.active) {
+                when (activation) {
+                    MenuActivation.HOLD -> { releaseHeldIfContinuous(slots, rt.heldSlot); rt.heldSlot = -1 }
+                    MenuActivation.COMMIT -> {
+                        // point-and-release commit — for release-style menus only, and not if a click already
+                        // committed this engagement or it's a Turbo slot (which fired repeatedly while held).
+                        val wasTurbo = slots.getOrNull(rt.slot)?.binding?.activator is Activator.Turbo
+                        if (!commitOnClick && !wasTurbo && !rt.committed) pulseSlot(slots, rt.slot)
+                    }
+                }
+                rt.slot = -1; rt.heldSlot = -1; rt.committed = false
+            }
+            // HUD: keep it visible while the source is still *touched* (thumb resting on the stick / finger on the
+            // pad) even before deflecting — show the ring with nothing highlighted; hide once the source is released.
+            if (shown) { rt.slot = -1; pushMenu(kind, slots, cols, rows, -1, center, directional, curX, curY) }
+            else if (rt.shown || rt.active) hideMenu()
+        }
+        rt.active = active
+        rt.shown = shown
+    }
+
+    /** Radial angle -> slot (0 at top, clockwise); keeps [prev] while inside the center dead-zone (~0.25 radius). */
+    private fun radialSlot(x: Int, y: Int, n: Int, prev: Int): Int {
+        val nx = x / 32768f
+        val ny = y / 32768f
+        if (nx * nx + ny * ny < 0.0625f) return prev
+        val ang = Math.toDegrees(kotlin.math.atan2(nx.toDouble(), ny.toDouble())) // 0=up, +clockwise
+        val norm = ((ang % 360) + 360) % 360
+        return Math.round(norm / (360.0 / n)).toInt() % n
+    }
+
+    /** Grid cell -> slot (row 0 = top), or -1 if past the slot count. */
+    private fun gridSlot(x: Int, y: Int, cols: Int, rows: Int, n: Int): Int {
+        val nx = (x.toFloat() / 65536f + 0.5f).coerceIn(0f, 0.999f)
+        val ny = (y.toFloat() / 65536f + 0.5f).coerceIn(0f, 0.999f)
+        val col = (nx * cols).toInt().coerceIn(0, cols - 1)
+        val rowTop = (rows - 1) - (ny * rows).toInt().coerceIn(0, rows - 1)
+        val cell = rowTop * cols + col
+        return if (cell < n) cell else -1
+    }
+
+    private fun pulseSlot(slots: List<MenuSlot>, slot: Int) {
+        val out = slots.getOrNull(slot)?.binding?.output ?: return
+        pressOutput(out); releaseOutput(out)
+    }
+
+    /** Release a HOLD slot's key only if it was held continuously (non-Turbo). Turbo slots are pulsed, so their
+     *  key is already up and a release would emit a spurious key-up. */
+    private fun releaseHeldIfContinuous(slots: List<MenuSlot>, idx: Int) {
+        val b = slots.getOrNull(idx)?.binding ?: return
+        if (b.activator !is Activator.Turbo) releaseOutput(b.output)
+    }
+
+    /** 8-way d-pad: bit0=up, bit1=down, bit2=left, bit3=right. Edge-press the outputs as the mask changes. */
+    private fun applyPadDpad(mode: PadMode.DPad, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {
+        val mask = if (!touched) 0 else {
+            val cx = x / 32768f
+            val cy = y / 32768f // pad +Y is up
+            var m = 0
+            if (cy > mode.deadzone) m = m or 0x1
+            if (cy < -mode.deadzone) m = m or 0x2
+            if (cx < -mode.deadzone) m = m or 0x4
+            if (cx > mode.deadzone) m = m or 0x8
+            m
+        }
+        if (mask == rt.dpadMask) return
+        val outs = arrayOf(mode.up, mode.down, mode.left, mode.right)
+        for (i in 0..3) {
+            val bit = 1 shl i
+            val was = rt.dpadMask and bit != 0
+            val now = mask and bit != 0
+            if (now && !was) pressOutput(outs[i])
+            if (!now && was) releaseOutput(outs[i])
+        }
+        rt.dpadMask = mask
+    }
+
+    /** Scroll wheel: accumulate vertical travel; each [step] units emits one wheel click. */
+    private fun applyPadScroll(mode: PadMode.ScrollWheel, rt: PadRuntime, touched: Boolean, y: Int) {
+        if (!touched) { rt.mouseActive = false; return }
+        if (!rt.mouseActive) { rt.mouseActive = true; rt.lastY = y; rt.scrollAccum = 0; return }
+        rt.scrollAccum += (y - rt.lastY)
+        rt.lastY = y
+        val up = if (mode.invertY) Pointer.Button.BUTTON_SCROLL_DOWN else Pointer.Button.BUTTON_SCROLL_UP
+        val down = if (mode.invertY) Pointer.Button.BUTTON_SCROLL_UP else Pointer.Button.BUTTON_SCROLL_DOWN
+        while (rt.scrollAccum >= mode.step) { clickWheel(up); rt.scrollAccum -= mode.step }   // finger up = scroll up
+        while (rt.scrollAccum <= -mode.step) { clickWheel(down); rt.scrollAccum += mode.step }
+    }
+
+    private fun clickWheel(button: Pointer.Button) {
+        sink.mouseButton(button, true)
+        sink.mouseButton(button, false)
+    }
+
+    private fun applyPadMouse(mode: PadMode.Mouse, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {
+        if (!touched) { rt.mouseActive = false; return }
+        if (!rt.mouseActive) {
+            rt.mouseActive = true; rt.lastX = x; rt.lastY = y; rt.accumX = 0f; rt.accumY = 0f; rt.smoothX = 0f; rt.smoothY = 0f
+            return
+        }
+        // Trailing-anchor deadzone (a "rubber band"): [lastX]/[lastY] is the anchor, not the previous report. While
+        // the finger stays within [floor] raw units of the anchor it's treated as resting → no motion (this kills
+        // resting jitter that a per-report gate leaks through, since a noise spike measured from a *fixed* anchor
+        // stays small). Once the finger moves past the floor, emit only the OVERSHOOT (distance beyond the
+        // deadzone) and slide the anchor to trail the finger by [floor] — so sustained movement tracks ~1:1 while a
+        // brief spike leaks only a pixel or two. The global "Touchpad deadzone" ([padDeadzone]) sets the radius.
+        val dxRaw = (x - rt.lastX).toFloat()
+        val dyRaw = (y - rt.lastY).toFloat() // raw pad space (+Y up); screen-Y handled at emit
+        val floor = (padDeadzone ?: mode.jitterFloor).toFloat()
+        val dist = hypot(dxRaw, dyRaw)
+        if (dist < floor) return
+        val ux = dxRaw / dist
+        val uy = dyRaw / dist
+        rt.lastX = (x - ux * floor).roundToInt()        // anchor trails the finger by the deadzone radius
+        rt.lastY = (y - uy * floor).roundToInt()
+        val over = dist - floor
+        val rawMoveX = ux * over * mode.sensitivity
+        val rawMoveY = (if (mode.invertY) -uy else uy) * over * mode.sensitivity
+        // Optional low-pass (Touchpad smoothing): EMA the motion to damp frame-to-frame jitter (costs a little lag).
+        val a = ScTuningStore.emaAlpha(padSmoothing)
+        rt.smoothX = rt.smoothX * (1f - a) + rawMoveX * a
+        rt.smoothY = rt.smoothY * (1f - a) + rawMoveY * a
+        // Accumulate scaled motion so sub-pixel movement isn't truncated away; emit the integer part, keep remainder.
+        rt.accumX += rt.smoothX
+        rt.accumY += rt.smoothY
+        val dx = rt.accumX.toInt()
+        val dy = rt.accumY.toInt()
+        if (dx != 0 || dy != 0) {
+            sink.mouseMove(dx, dy)
+            rt.accumX -= dx; rt.accumY -= dy
+        }
+    }
+
+    /** Button Pad / ToME grid: the cell under the finger is active while the activating bit is set. */
+    private fun applyPadGrid(mode: PadMode.ButtonPadGrid, rt: PadRuntime, active: Boolean, x: Int, y: Int) {
+        if (!active) {
+            if (rt.gridCell >= 0) { releaseOutput(mode.cells.getOrNull(rt.gridCell)); rt.gridCell = -1 }
+            return
+        }
+        // pad position -> normalized 0..1 (nx left->right, ny bottom->top, since pad +Y is up)
+        val nx = (x.toFloat() / 65536f + 0.5f).coerceIn(0f, 0.999f)
+        val ny = (y.toFloat() / 65536f + 0.5f).coerceIn(0f, 0.999f)
+        val col = (nx * mode.cols).toInt().coerceIn(0, mode.cols - 1)
+        val row = (ny * mode.rows).toInt().coerceIn(0, mode.rows - 1)
+        val cell = row * mode.cols + col
+        if (cell != rt.gridCell) {
+            releaseOutput(mode.cells.getOrNull(rt.gridCell))
+            rt.gridCell = cell
+            pressOutput(mode.cells.getOrNull(cell))
+        }
+    }
+
+    private fun releaseGridCell(mode: PadMode, rt: PadRuntime) {
+        if (rt.gridCell >= 0 && mode is PadMode.ButtonPadGrid) releaseOutput(mode.cells.getOrNull(rt.gridCell))
+        rt.gridCell = -1
+    }
+
+    /** Press an edge-style output (keys / mouse buttons). Gamepad/dpad/none cells are not edge-pressable. */
+    private fun pressOutput(out: ScOutput?) {
+        when (out) {
+            is ScOutput.Key -> out.keys.forEach { sink.key(it, true) }
+            is ScOutput.MouseButton -> sink.mouseButton(out.button, true)
+            is ScOutput.MouseNudge -> if (out.dx != 0 || out.dy != 0) sink.mouseMove(out.dx, out.dy) // one-shot move
+            else -> {}
+        }
+    }
+
+    private fun releaseOutput(out: ScOutput?) {
+        when (out) {
+            is ScOutput.Key -> out.keys.asReversed().forEach { sink.key(it, false) }
+            is ScOutput.MouseButton -> sink.mouseButton(out.button, false)
+            else -> {}
+        }
+    }
+
+    private fun applyGyro(mode: GyroMode, s: TritonState) {
+        when (mode) {
+            is GyroMode.Mouse -> {
+                val gated = when (mode.gate) {
+                    GyroGate.ALWAYS -> true
+                    GyroGate.LEFT_GRIP -> s.has(TritonProtocol.BTN_LGRIP)
+                    GyroGate.RIGHT_GRIP -> s.has(TritonProtocol.BTN_RGRIP)
+                    GyroGate.EITHER_GRIP -> s.has(TritonProtocol.BTN_LGRIP) || s.has(TritonProtocol.BTN_RGRIP)
+                }
+                if (gated) {
+                    val dx = (s.gyroZ * mode.sensitivity).toInt()   // yaw
+                    val dy = (s.gyroX * mode.sensitivity).toInt()   // pitch
+                    if (dx != 0 || dy != 0) sink.mouseMove(dx, dy)
+                }
+            }
+            GyroMode.None -> {}
+        }
+    }
+
+    private fun axis(raw: Int, deadzone: Float): Float {
+        val v = (raw / 32767f).coerceIn(-1f, 1f)
+        return if (abs(v) < deadzone) 0f else v
+    }
+
+    /** Stick deflection magnitude 0..~1 (for menu activation thresholds). */
+    private fun stickMag(x: Int, y: Int): Float {
+        val nx = x / 32768f; val ny = y / 32768f
+        return kotlin.math.sqrt(nx * nx + ny * ny)
+    }
+
+    /**
+     * Deadzoned axis with a [curve] applied to the magnitude beyond the deadzone (sign preserved). LINEAR is
+     * intentionally identical to [axis] (no rescale) so the golden-trace regression stays valid; non-linear
+     * curves rescale the post-deadzone range to 0..1 before shaping.
+     */
+    private fun axisCurved(raw: Int, deadzone: Float, curve: ResponseCurve): Float {
+        val v = (raw / 32767f).coerceIn(-1f, 1f)
+        val a = abs(v)
+        if (a < deadzone) return 0f
+        if (curve == ResponseCurve.LINEAR) return v
+        val scaled = ((a - deadzone) / (1f - deadzone)).coerceIn(0f, 1f)
+        val shaped = curve.apply(scaled).coerceIn(0f, 1f)
+        return if (v < 0) -shaped else shaped
+    }
+}

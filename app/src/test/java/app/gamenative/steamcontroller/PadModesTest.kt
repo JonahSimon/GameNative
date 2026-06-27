@@ -1,0 +1,171 @@
+package app.gamenative.steamcontroller
+
+import com.winlator.xserver.Pointer
+import com.winlator.xserver.XKeycode
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+
+/** Unit tests for trackpad source modes, driven by synthetic states (no device needed). */
+@RunWith(RobolectricTestRunner::class)
+class PadModesTest {
+
+    private fun leftPadState(touch: Boolean, x: Int, y: Int, click: Boolean = false): TritonState {
+        val s = TritonState()
+        var b = 0
+        if (touch) b = b or TritonProtocol.BTN_LPAD_TOUCH
+        if (click) b = b or TritonProtocol.BTN_LPAD_CLICK
+        s.buttons = b
+        s.leftPadX = x; s.leftPadY = y
+        return s
+    }
+
+    // 2x2 grid: cells row-major, row 0 = BOTTOM, col 0 = LEFT.
+    //   cell0 = bottom-left  -> F1
+    //   cell1 = bottom-right -> F2
+    //   cell2 = top-left     -> F3
+    //   cell3 = top-right    -> F4
+    private fun grid2x2Profile() = ScProfile(
+        leftPad = PadMode.ButtonPadGrid(
+            cols = 2, rows = 2,
+            cells = listOf(
+                ScOutput.Key(XKeycode.KEY_F1), ScOutput.Key(XKeycode.KEY_F2),
+                ScOutput.Key(XKeycode.KEY_F3), ScOutput.Key(XKeycode.KEY_F4),
+            ),
+        ),
+    )
+
+    private fun touchCellThenRelease(interp: ProfileInterpreter, x: Int, y: Int) {
+        interp.apply(leftPadState(touch = true, x = x, y = y))
+        interp.apply(leftPadState(touch = false, x = x, y = y))
+    }
+
+    @Test
+    fun `button pad grid fires the cell under the finger`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, grid2x2Profile(), haptics = null)
+
+        touchCellThenRelease(interp, x = -30000, y = -30000) // bottom-left -> F1
+        touchCellThenRelease(interp, x = 30000, y = -30000)  // bottom-right -> F2
+        touchCellThenRelease(interp, x = -30000, y = 30000)  // top-left -> F3
+        touchCellThenRelease(interp, x = 30000, y = 30000)   // top-right -> F4
+
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F1))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F2))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F3))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F4))
+    }
+
+    @Test
+    fun `grid releases a cell on lift and only one cell active at a time`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, grid2x2Profile(), haptics = null)
+
+        interp.apply(leftPadState(touch = true, x = -30000, y = -30000)) // F1 down
+        interp.apply(leftPadState(touch = false, x = -30000, y = -30000)) // F1 up
+
+        // Equal numbers of down and up for F1, and no other key fired.
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_F1 && it.pressed })
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_F1 && !it.pressed })
+        assertTrue("no F2 expected", sink.keyPresses(XKeycode.KEY_F2) == 0)
+    }
+
+    @Test
+    fun `sliding across cells switches the active cell`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, grid2x2Profile(), haptics = null)
+
+        // Touch bottom-left, slide to bottom-right without lifting, then release.
+        interp.apply(leftPadState(touch = true, x = -30000, y = -30000)) // F1 down
+        interp.apply(leftPadState(touch = true, x = 30000, y = -30000))  // -> F1 up, F2 down
+        interp.apply(leftPadState(touch = false, x = 30000, y = -30000)) // F2 up
+
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F1))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F2))
+        // F1 should have been released when sliding off it.
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_F1 && !it.pressed })
+    }
+
+    // up=F1, down=F2, left=F3, right=F4
+    private fun dpadProfile() = ScProfile(
+        leftPad = PadMode.DPad(
+            up = ScOutput.Key(XKeycode.KEY_F1), down = ScOutput.Key(XKeycode.KEY_F2),
+            left = ScOutput.Key(XKeycode.KEY_F3), right = ScOutput.Key(XKeycode.KEY_F4),
+        ),
+    )
+
+    @Test
+    fun `pad d-pad presses the direction held`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, dpadProfile(), haptics = null)
+        fun dir(x: Int, y: Int) {
+            interp.apply(leftPadState(touch = true, x = x, y = y))
+            interp.apply(leftPadState(touch = false, x = 0, y = 0))
+        }
+        dir(0, 30000)   // up -> F1
+        dir(0, -30000)  // down -> F2
+        dir(-30000, 0)  // left -> F3
+        dir(30000, 0)   // right -> F4
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F1))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F2))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F3))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F4))
+    }
+
+    @Test
+    fun `pad d-pad fires two outputs on a diagonal`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, dpadProfile(), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 30000, y = 30000)) // up-right
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F1)) // up
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_F4)) // right
+        assertEquals(0, sink.keyPresses(XKeycode.KEY_F2)) // not down
+    }
+
+    @Test
+    fun `pad mouse ignores resting-finger jitter below the floor`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.Mouse(sensitivity = 1f / 70f, invertY = false, jitterFloor = 12)), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 1000, y = 1000)) // activate
+        // small zero-mean wiggle, each delta < 12 raw units
+        interp.apply(leftPadState(touch = true, x = 1006, y = 998))
+        interp.apply(leftPadState(touch = true, x = 996, y = 1005))
+        interp.apply(leftPadState(touch = true, x = 1004, y = 999))
+        assertEquals("resting jitter should produce no cursor motion", 0, sink.mouseMoves)
+    }
+
+    @Test
+    fun `pad mouse moves on a real drag above the floor`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.Mouse(sensitivity = 1f / 70f, invertY = false, jitterFloor = 12)), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 0, y = 0))     // activate
+        interp.apply(leftPadState(touch = true, x = 7000, y = 0))  // big drag right -> 100px
+        assertTrue(sink.mouseMoves > 0)
+        assertTrue("moved right", sink.mouseDx > 0)
+    }
+
+    @Test
+    fun `pad mouse accumulates sub-pixel motion instead of truncating it away`() {
+        val sink = RecordingSink()
+        // low sensitivity: each step is <1px but above the jitter floor; old truncation would drop it forever.
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.Mouse(sensitivity = 0.02f, invertY = false, jitterFloor = 12)), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 0, y = 0))
+        repeat(5) { i -> interp.apply(leftPadState(touch = true, x = 30 * (i + 1), y = 0)) } // 30 units/step * 0.02 = 0.6px
+        assertTrue("sub-pixel motion should accumulate into real movement", sink.mouseDx > 0)
+    }
+
+    @Test
+    fun `scroll wheel emits one click per step of travel`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.ScrollWheel(step = 6000)), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 0, y = 0))      // start (no emit)
+        interp.apply(leftPadState(touch = true, x = 0, y = 6000))   // +1 up
+        interp.apply(leftPadState(touch = true, x = 0, y = 12000))  // +1 up
+        interp.apply(leftPadState(touch = true, x = 0, y = 18000))  // +1 up
+        interp.apply(leftPadState(touch = true, x = 0, y = 12000))  // -1 down
+        assertEquals(3, sink.mouseButtonPresses(Pointer.Button.BUTTON_SCROLL_UP))
+        assertEquals(1, sink.mouseButtonPresses(Pointer.Button.BUTTON_SCROLL_DOWN))
+    }
+}

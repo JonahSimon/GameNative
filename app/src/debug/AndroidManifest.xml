@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only: adb-triggerable Steam Controller self-test/capture receiver (automation harness). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Debug-only all-files access. The `modern` flavor drops MANAGE_EXTERNAL_STORAGE (Play-Store policy), but
+      reading arbitrary custom-game folders (e.g. /storage/emulated/0/World Of Warcraft for the exe scan +
+      CustomGameScanner) needs it. Declared in the debug source set so modernDebug can be granted it for on-device
+      testing while the modern *release* stays policy-clean. Legacy already declares this in src/legacy.
+    -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <application>
+        <receiver
+            android:name="app.gamenative.steamcontroller.ScTestReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.gamenative.SC_SELFTEST" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

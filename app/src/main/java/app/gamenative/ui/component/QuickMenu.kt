@@ -109,6 +109,13 @@ object QuickMenuAction {
     const val PERFORMANCE_HUD = 6
     const val TOUCHSCREEN_MODE = 7
     const val DISABLE_MOUSE = 8
+    // Steam Controller (Triton) live editors — shown in the CONTROLLER tab only when an SC is connected.
+    const val SC_BINDINGS = 9
+    const val SC_LABELS = 10
+    const val SC_TUNING = 11
+    const val SC_LAYOUT = 12
+    // Single root entry that opens the Steam Controller editor hub (lists the editors above).
+    const val SC_ROOT = 13
 }
 
 private object QuickMenuTab {
@@ -254,6 +261,9 @@ fun QuickMenu(
     onFpsLimiterEnabledChanged: (Boolean) -> Unit = {},
     onFpsLimiterChanged: (Int) -> Unit = {},
     hasPhysicalController: Boolean = false,
+    /** A Steam Controller (Triton) is live this session — surface its rich editors and hide the generic gamepad
+     *  mapper (the BLE Triton isn't an Android input device, so the generic mapper doesn't apply to it). */
+    isSteamControllerLive: Boolean = false,
     isTouchscreenModeActive: Boolean = false,
     onTouchGestureSettingsClick: () -> Unit = {},
     activeToggleIds: Set<Int> = emptySet(),
@@ -276,6 +286,10 @@ fun QuickMenu(
     )
 
     val controllerItems = buildList {
+        // Steam Controller editors live behind a single root entry (most relevant when a Triton is connected).
+        if (isSteamControllerLive) {
+            add(QuickMenuItem(QuickMenuAction.SC_ROOT, Icons.Filled.Gamepad, R.string.sc_edit_root, PluviaTheme.colors.accentPurple))
+        }
         add(
             QuickMenuItem(
                 id = QuickMenuAction.DISABLE_MOUSE,
@@ -300,7 +314,8 @@ fun QuickMenu(
                 accentColor = PluviaTheme.colors.accentPurple,
             )
         )
-        if (hasPhysicalController) {
+        // The generic gamepad mapper doesn't apply to the BLE Steam Controller — hide it when an SC is live.
+        if (hasPhysicalController && !isSteamControllerLive) {
             add(
                 QuickMenuItem(
                     id = QuickMenuAction.EDIT_PHYSICAL_CONTROLLER,

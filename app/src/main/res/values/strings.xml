@@ -236,6 +236,11 @@
     <string name="input_controls">On-screen Controller</string>
     <string name="edit_controls">Edit On-screen Controller</string>
     <string name="edit_physical_controller">Edit Physical Controller</string>
+    <string name="sc_edit_root">Steam Controller</string>
+    <string name="sc_edit_bindings">SC: Buttons &amp; Bindings</string>
+    <string name="sc_edit_labels">SC: Menu Labels</string>
+    <string name="sc_edit_tuning">SC: Touchpad &amp; Menus</string>
+    <string name="sc_edit_layout">SC: Overlay Layout</string>
     <string name="controller_disconnected">Disconnected</string>
     <string name="reset_onscreen_controls">Reset On-Screen Controls</string>
     <string name="open_navigation_menu">Open Navigation Menu</string>

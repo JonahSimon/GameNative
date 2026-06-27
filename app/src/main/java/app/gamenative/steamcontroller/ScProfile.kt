@@ -1,0 +1,374 @@
+package app.gamenative.steamcontroller
+
+import com.winlator.inputcontrols.ExternalController
+import com.winlator.xserver.Pointer
+import com.winlator.xserver.XKeycode
+
+/**
+ * The Steam Controller mapping profile model + its interpreter's data types. A [ScProfile] describes how
+ * each physical SC source (buttons, sticks, trackpads, triggers, gyro) maps to GameNative outputs
+ * (virtual XInput pad, mouse, keys). [ProfileInterpreter] consumes a decoded [TritonState] + a profile and
+ * drives GameNative's injection seams.
+ *
+ * This replaces the hardcoded map that lived in TritonMapper. The shipped default ([ScProfile.default]) is
+ * expressed *in this model*, so the interpreter is exercised end-to-end and behaviour is identical to the
+ * old hardcoded path. The sealed mode/output types intentionally carry one case each for now; later build
+ * steps add cases (pad grid, d-pad, scroll, activators, action sets) without changing the interpreter's
+ * shape. See docs/STEAM-INPUT-FEATURES.md (build order) and docs/SC-MAPPING-ENGINE.md.
+ */
+
+/** What a single digital (button-like) SC bit emits. Gamepad outputs are level-based; key/mouse are edge-based. */
+sealed class ScOutput {
+    /** No output (explicitly unbound). */
+    object None : ScOutput()
+    /** A virtual XInput pad button, by ExternalController.IDX_BUTTON_* index. Driven by current pressed state. */
+    data class GamepadButton(val idx: Int) : ScOutput()
+    /** A virtual XInput d-pad direction: 0=up, 1=right, 2=down, 3=left (GamepadState.dpad order). */
+    data class GamepadDpad(val index: Int) : ScOutput()
+    /** A mouse button, pressed/released on the bit's edges. */
+    data class MouseButton(val button: Pointer.Button) : ScOutput()
+    /**
+     * A keyboard output: one key, or a combo (modifiers + key) held together. On press all keys go down in
+     * order; on release they come up in reverse order. A single key is just a one-element list.
+     */
+    data class Key(val keys: List<XKeycode>) : ScOutput() {
+        constructor(key: XKeycode) : this(listOf(key))
+    }
+    /**
+     * Switch the active **action set** (Steam `CHANGE_PRESET`). Fired on the binding's edge: [onRelease] = false
+     * presses-edge (e.g. `Start_Press` → enter a menu set), true = release-edge (e.g. the menu set's same button
+     * → return). The "hold for menus" feel comes from each set re-binding the button (enter on press in set A,
+     * leave on release in set B), so no momentary state is needed. Handled by [ProfileInterpreter] only when an
+     * [ScConfig] is installed; a no-op otherwise. [targetSetId] is the Steam preset id.
+     */
+    data class SwitchActionSet(val targetSetId: String, val onRelease: Boolean = false) : ScOutput()
+    /**
+     * Push/pop an action **layer** (Steam `add_layer`/`hold_layer`/`remove_layer`). A layer is a partial overlay
+     * (another preset) merged over the active set — see [mergeProfiles]. [op] picks the behaviour: ADD = push
+     * until removed, REMOVE = pop, HOLD = push while the button is held (popped on release). [layerId] = Steam
+     * preset id. Handled by [ProfileInterpreter] only when an [ScConfig] is installed.
+     */
+    data class LayerOp(val layerId: String, val op: LayerOpType) : ScOutput()
+    /**
+     * Mode-shift (Steam `mode_shift <source> <groupId>`): while this button is held, a single [source] (e.g.
+     * "left_trackpad") momentarily uses an alternate group's mode/bindings. [groupId] is the raw group id; its
+     * decoded single-source overlay lives in [ScConfig.shiftOverlays] and is merged over the active profile only
+     * while held ([mergeProfiles] with `layerSources={source}`). Handled by [ProfileInterpreter] with a config.
+     */
+    data class ModeShift(val source: String, val groupId: String) : ScOutput()
+    /** Toggle the on-screen split-trackpad keyboard (Steam `controller_action SHOW_KEYBOARD`). Handled by
+     *  [ProfileInterpreter]: on the press edge it flips keyboard mode (pads drive the keyboard, see [ScKeyboard]). */
+    object ShowKeyboard : ScOutput()
+    /** Open GameNative's in-game QuickMenu (and let the controller navigate it). On the press edge the
+     *  [ProfileInterpreter] calls [ScUiBridge.openQuickMenu]; while any menu/editor is up the interpreter routes
+     *  controller input to Android focus-nav keys instead of the game. Default-bound to the Steam button. */
+    object OpenQuickMenu : ScOutput()
+    /** A one-shot relative mouse nudge (Steam `controller_action mouse_delta dx dy`): emits a single
+     *  [ScOutputSink.mouseMove] on the press edge. */
+    data class MouseNudge(val dx: Int, val dy: Int) : ScOutput()
+}
+
+enum class LayerOpType { ADD, HOLD, REMOVE }
+
+/**
+ * Merge a [layer] (partial overlay) over a [base] profile. The layer overrides exactly the sources it binds —
+ * [layerSources] is the set of `group_source_bindings` sources the layer defines (e.g. "right_trackpad",
+ * "joystick"); every other source falls through to [base]. Button bits the layer binds win per-bit (covers the
+ * digital sources button_diamond/switch/dpad + clicks). This is Steam's action-layer semantics: a layer changes
+ * only what it touches and leaves the rest of the active set intact.
+ */
+fun mergeProfiles(base: ScProfile, layer: ScProfile, layerSources: Set<String>): ScProfile {
+    fun has(src: String) = src in layerSources
+    return ScProfile(
+        name = base.name,
+        buttons = base.buttons + layer.buttons,
+        leftStick = if (has("joystick")) layer.leftStick else base.leftStick,
+        rightStick = if (has("right_joystick")) layer.rightStick else base.rightStick,
+        leftPad = if (has("left_trackpad")) layer.leftPad else base.leftPad,
+        rightPad = if (has("right_trackpad")) layer.rightPad else base.rightPad,
+        leftTrigger = if (has("left_trigger")) layer.leftTrigger else base.leftTrigger,
+        rightTrigger = if (has("right_trigger")) layer.rightTrigger else base.rightTrigger,
+        gyro = if (has("gyro")) layer.gyro else base.gyro,
+        haptics = base.haptics,
+    )
+}
+
+/**
+ * A whole controller config = several named action sets ([sets], keyed by Steam **preset id** since that's what
+ * `CHANGE_PRESET`/[ScOutput.SwitchActionSet] targets) plus which one is active at launch ([defaultSetId]).
+ * Produced by `SteamControllerProfileImporter.importConfig`; consumed by [ProfileInterpreter] to drive
+ * config-defined action-set switching. (Action *layers* / mode-shift / chord are later build-step-3 additions.)
+ */
+class ScConfig(
+    val sets: Map<String, ScProfile>,
+    val defaultSetId: String,
+    /** Per-preset-id set of `group_source_bindings` sources it defines — drives action-layer merging ([mergeProfiles]). */
+    val setSources: Map<String, Set<String>> = emptyMap(),
+    /** Decoded single-source overlays for [ScOutput.ModeShift], keyed by the target group id. */
+    val shiftOverlays: Map<String, ScProfile> = emptyMap(),
+) {
+    /** The set to start in (falls back to any set, then an empty profile). */
+    fun defaultProfile(): ScProfile = sets[defaultSetId] ?: sets.values.firstOrNull() ?: ScProfile()
+}
+
+/**
+ * Per-binding press logic (Steam's "activators"). Only affects edge outputs (Key / MouseButton); gamepad
+ * button/d-pad outputs are always level (Regular). "Pulse" = a quick press+release in one update.
+ */
+sealed class Activator {
+    /** Press on down, release on up (default). */
+    object Regular : Activator()
+    /** Pulse only if pressed twice within [windowMs]; a single press does nothing. */
+    data class DoublePress(val windowMs: Long = 300) : Activator()
+    /** Press once held for [holdMs] (stays held until physical release). */
+    data class LongPress(val holdMs: Long = 500) : Activator()
+    /** While held, pulse every [intervalMs] (rapid fire). */
+    data class Turbo(val intervalMs: Long = 80) : Activator()
+    /** Fire (a quick pulse) on the **release** edge — Steam's `release` activator ("do X when you let go"). */
+    object OnRelease : Activator()
+}
+
+/** A digital binding: an [output] plus the [activator] press-logic that drives it. */
+data class Binding(val output: ScOutput, val activator: Activator = Activator.Regular)
+
+/** Which XInput trigger axis a physical SC trigger's analog value drives. */
+enum class TriggerAxis { NONE, GAMEPAD_L2, GAMEPAD_R2 }
+
+/** What a physical trigger does. */
+sealed class TriggerMode {
+    /** Analog trigger -> an XInput trigger axis (the default). */
+    data class Axis(val axis: TriggerAxis) : TriggerMode()
+    /**
+     * Soft/full-pull staging: crossing [softThreshold] fires [soft], crossing [fullThreshold] fires [full]
+     * (both can be held; e.g. soft = aim, full = shoot). Optionally also drive an analog [axis].
+     */
+    data class Staged(
+        val soft: ScOutput,
+        val full: ScOutput,
+        val softThreshold: Float = 0.4f,
+        val fullThreshold: Float = 0.9f,
+        val axis: TriggerAxis = TriggerAxis.NONE,
+    ) : TriggerMode()
+}
+
+/** Analog thumbstick source mode. */
+sealed class StickMode {
+    object None : StickMode()
+    /** Drive a virtual XInput stick. [invertY] matches XInput's up-is-positive convention. [curve] shapes the
+     *  magnitude response (linear/aggressive/relaxed). */
+    data class JoystickMove(
+        val stick: Stick,
+        val invertY: Boolean = true,
+        val deadzone: Float = 0.12f,
+        val curve: ResponseCurve = ResponseCurve.LINEAR,
+    ) : StickMode()
+    /** Stick → relative mouse (Steam `joystick_mouse`/`mouse_joystick`): deflection drives pointer velocity.
+     *  [sensitivity] = px per update at full deflection; [deadzone] ignores rest jitter; [curve] shapes response. */
+    data class Mouse(
+        val sensitivity: Float = 12f,
+        val deadzone: Float = 0.10f,
+        val invertY: Boolean = false,
+        val curve: ResponseCurve = ResponseCurve.LINEAR,
+    ) : StickMode()
+    /** Flick stick (Steam `flickstick`): a simplified approximation — horizontal stick deflection → yaw mouse
+     *  velocity. NOTE: not the true flick-and-rotate model; see docs/RISKS.md. [sensitivity] = px/update at full. */
+    data class FlickStick(val sensitivity: Float = 20f, val deadzone: Float = 0.20f) : StickMode()
+    /** Radial menu driven by the **stick** (e.g. ToME4 "Movement (Radial)"): deflection angle selects a slot;
+     *  [activation] HOLD (default for sticks — hold the slot's output while pointed, like a movement radial) or
+     *  COMMIT (pulse on return-to-center). The HUD shows while deflected past [deadzone], fades on center.
+     *  [center] = the Steam radial's center button (`touch_menu_button_0`, render-only here); [directional] = a
+     *  movement radial whose 8 ring slots are labelled by 8-way arrow (↑↗→↘↓↙←↖) instead of their bound key. */
+    data class RadialMenu(
+        val slots: List<MenuSlot>,
+        val activation: MenuActivation = MenuActivation.HOLD,
+        val deadzone: Float = 0.35f,
+        val center: MenuSlot? = null,
+        val directional: Boolean = false,
+    ) : StickMode()
+    /** Touch/grid menu driven by the stick: deflection picks a grid cell. [activation]/[deadzone] as [RadialMenu]. */
+    data class TouchMenu(val slots: List<MenuSlot>, val cols: Int, val rows: Int, val activation: MenuActivation = MenuActivation.HOLD, val deadzone: Float = 0.35f) : StickMode()
+}
+
+/**
+ * How a Radial/Touch menu commits its highlighted slot.
+ * - [COMMIT]: select while interacting, fire (pulse) once when interaction ends (release/center) or on click —
+ *   hotbar/quick-select menus.
+ * - [HOLD]: hold the highlighted slot's output while pointed; release when the highlight changes or interaction
+ *   ends — movement radials ("hold a direction").
+ */
+enum class MenuActivation { COMMIT, HOLD }
+
+enum class Stick { LEFT, RIGHT }
+
+/** Response curve applied to an analog magnitude (0..1) before output. Approximates Steam's curve presets. */
+enum class ResponseCurve { LINEAR, AGGRESSIVE, RELAXED, WIDE, EXTRA_WIDE;
+    fun apply(m: Float): Float = when (this) {
+        LINEAR -> m
+        AGGRESSIVE -> m * m            // slow near center, fast at edge
+        RELAXED -> kotlin.math.sqrt(m) // fast near center
+        WIDE -> m * m * m
+        EXTRA_WIDE -> m * 0.5f
+    }
+}
+
+/** Trackpad touch-motion source mode. (Pad CLICK is a separate digital bit handled via [ScProfile.buttons].) */
+sealed class PadMode {
+    object None : PadMode()
+    /**
+     * Relative mouse: finger drag -> pointer delta. [sensitivity] = pad-units-to-pixels divisor reciprocal.
+     * [jitterFloor] (raw pad units) gates out resting-finger noise so the cursor doesn't crawl when the finger is
+     * still; sub-[jitterFloor] per-report deltas are ignored. Sub-pixel motion is accumulated (not truncated away)
+     * so slow drags stay smooth. Raise [jitterFloor] if the cursor still wanders at rest; lower it if slow aiming
+     * feels dead.
+     */
+    data class Mouse(val sensitivity: Float, val invertY: Boolean = true, val jitterFloor: Int = 24) : PadMode()
+    /**
+     * Button Pad / ToME grid: pad split into [cols]×[rows]; the cell under the finger fires its output.
+     * [cells] is row-major, **row 0 = BOTTOM, col 0 = LEFT** (`cells[row*cols + col]`); pad with fewer cells
+     * than `cols*rows` leaves the rest unbound. [onClick] = fire on pad CLICK (else on TOUCH). Cell outputs
+     * currently support Key and MouseButton (the ToME 4×4 use case).
+     */
+    data class ButtonPadGrid(
+        val cols: Int,
+        val rows: Int,
+        val cells: List<ScOutput>,
+        val onClick: Boolean = false,
+    ) : PadMode()
+    /**
+     * Pad as an 8-way d-pad: while touched, the finger direction past [deadzone] presses the matching
+     * output(s) (diagonals press two). Outputs are edge-style (Key / MouseButton) — e.g. pad → WASD.
+     */
+    data class DPad(
+        val up: ScOutput,
+        val down: ScOutput,
+        val left: ScOutput,
+        val right: ScOutput,
+        val deadzone: Float = 0.35f,
+    ) : PadMode()
+    /** Finger slide → scroll wheel: every [step] pad-units of vertical travel emits one wheel click. */
+    data class ScrollWheel(val step: Int = 6000, val invertY: Boolean = false) : PadMode()
+    /**
+     * Radial Menu (Steam `radial_menu`): while the pad is touched, the finger **angle** highlights one of
+     * [slots] arranged in a ring (slot 0 at top/12-o'clock, clockwise); committing fires that slot's binding as
+     * a pulse. [onClick] = commit on pad click; else commit on touch-release ("point and release"). The visual
+     * ring is the step-6 overlay; this is the source-independent selection logic (works "blind"). Slot labels are
+     * kept for the overlay. [center] = Steam's `touch_menu_button_0` center button (render-only); [directional] =
+     * a movement radial whose 8 ring slots are labelled by 8-way arrow instead of their bound key.
+     */
+    data class RadialMenu(
+        val slots: List<MenuSlot>,
+        val onClick: Boolean = false,
+        val activation: MenuActivation = MenuActivation.COMMIT,
+        val center: MenuSlot? = null,
+        val directional: Boolean = false,
+    ) : PadMode()
+    /**
+     * Touch Menu (Steam `touch_menu`): the pad is split into a [cols]×[rows] grid (row 0 = TOP), the cell under
+     * the finger highlights a slot, committing fires it. [onClick]/release semantics as [RadialMenu]. Same grid
+     * the overlay (step 6) will draw.
+     */
+    data class TouchMenu(val slots: List<MenuSlot>, val cols: Int, val rows: Int, val onClick: Boolean = false, val activation: MenuActivation = MenuActivation.COMMIT) : PadMode()
+    // Future: MouseRegion, JoystickMove, Trackball, ...
+}
+
+/** One entry of a Radial/Touch menu: the [binding] it fires on commit + a [label] (for the step-6 overlay). */
+data class MenuSlot(val binding: Binding, val label: String = "")
+
+/** Gyro source mode. */
+sealed class GyroMode {
+    object None : GyroMode()
+    /** Gyro rate -> mouse aim delta, gated by [gate] (e.g. only while a grip is held). */
+    data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP) : GyroMode()
+    // Future (build step 2): Joystick (camera). Activation styles beyond grips: always/toggle/button/pad-touch.
+}
+
+/** When a gyro mode is active. */
+enum class GyroGate { ALWAYS, LEFT_GRIP, RIGHT_GRIP, EITHER_GRIP }
+
+/**
+ * Trackpad/haptic feel parameters — profile-driven so the binding-editor UI can expose full haptics control
+ * (docs/STEAM-INPUT-FEATURES.md §8). Defaults are the values tuned-by-feel from the USBPcap capture and
+ * confirmed over USB on-phone 2026-06-17.
+ */
+data class HapticSettings(
+    val enabled: Boolean = true,
+    val leftPadEnabled: Boolean = true,
+    val rightPadEnabled: Boolean = true,
+    val clickGain: Int = 0xFE,    // press-down click loudness (int8 dB; less-negative = louder)
+    val tickGain: Int = 0xF7,     // slide detent loudness
+    val detentStep: Int = 7600,   // pad-units of travel between detent ticks
+    val moveNoise: Int = 220,     // per-report delta below this is jitter (ignored)
+)
+
+/**
+ * A full mapping profile. Digital bits map through [buttons]; the analog sources have dedicated mode fields.
+ * One action set for now; action sets/layers/mode-shift (build step 3) will wrap this.
+ */
+class ScProfile(
+    val name: String = "Default",
+    /** TritonProtocol.BTN_* bit -> binding (output + activator). Bits absent from the map are unbound. */
+    val buttons: Map<Int, Binding> = emptyMap(),
+    val leftStick: StickMode = StickMode.None,
+    val rightStick: StickMode = StickMode.None,
+    val leftPad: PadMode = PadMode.None,
+    val rightPad: PadMode = PadMode.None,
+    /** What each physical trigger does (analog axis by default; or soft/full staging). */
+    val leftTrigger: TriggerMode = TriggerMode.Axis(TriggerAxis.GAMEPAD_L2),
+    val rightTrigger: TriggerMode = TriggerMode.Axis(TriggerAxis.GAMEPAD_R2),
+    val gyro: GyroMode = GyroMode.None,
+    val haptics: HapticSettings = HapticSettings(),
+) {
+    companion object {
+        /**
+         * The shipped default profile (any game) — a faithful re-expression of the old hardcoded TritonMapper
+         * map. Sticks/ABXY/d-pad/bumpers/L3/R3/Start/Back/triggers -> virtual XInput pad; right pad drag ->
+         * mouse; right-pad click -> left mouse, left-pad click -> right mouse; gyro while a grip is held ->
+         * mouse aim; 4 rear paddles -> F1-F4 placeholders. Start/Back per SDL (VIEW 0x40=Start, MENU 0x4000=Back).
+         */
+        fun default(): ScProfile {
+            val b = TritonProtocol
+            val buttons = mapOf(
+                b.BTN_A to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_A.toInt()),
+                b.BTN_B to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_B.toInt()),
+                b.BTN_X to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_X.toInt()),
+                b.BTN_Y to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_Y.toInt()),
+                b.BTN_LBUMPER to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_L1.toInt()),
+                b.BTN_RBUMPER to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_R1.toInt()),
+                b.BTN_L3 to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_L3.toInt()),
+                b.BTN_R3 to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_R3.toInt()),
+                // SDL: VIEW bit (0x40) = Start, MENU bit (0x4000) = Back/Select.
+                b.BTN_VIEW to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_START.toInt()),
+                b.BTN_MENU to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_SELECT.toInt()),
+                b.BTN_DPAD_UP to ScOutput.GamepadDpad(0),
+                b.BTN_DPAD_RIGHT to ScOutput.GamepadDpad(1),
+                b.BTN_DPAD_DOWN to ScOutput.GamepadDpad(2),
+                b.BTN_DPAD_LEFT to ScOutput.GamepadDpad(3),
+                b.BTN_LTRIG_CLICK to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_L2.toInt()),
+                b.BTN_RTRIG_CLICK to ScOutput.GamepadButton(ExternalController.IDX_BUTTON_R2.toInt()),
+                b.BTN_RPAD_CLICK to ScOutput.MouseButton(Pointer.Button.BUTTON_LEFT),
+                b.BTN_LPAD_CLICK to ScOutput.MouseButton(Pointer.Button.BUTTON_RIGHT),
+                // Rear paddles -> placeholder keys (profile-configurable later).
+                b.BTN_R4 to ScOutput.Key(XKeycode.KEY_F1),
+                b.BTN_R5 to ScOutput.Key(XKeycode.KEY_F2),
+                b.BTN_L4 to ScOutput.Key(XKeycode.KEY_F3),
+                b.BTN_L5 to ScOutput.Key(XKeycode.KEY_F4),
+                // Steam/Guide button opens the GameNative QuickMenu (and lets the controller navigate it).
+                b.BTN_STEAM to ScOutput.OpenQuickMenu,
+                // The "..." Quick-Access (3-dots) button between the trackpads toggles the on-screen keyboard.
+                b.BTN_QAM to ScOutput.ShowKeyboard,
+            ).mapValues { (_, out) -> Binding(out) }  // default: all Regular activators
+            return ScProfile(
+                name = "Default",
+                buttons = buttons,
+                leftStick = StickMode.JoystickMove(Stick.LEFT, invertY = true, deadzone = 0.12f),
+                rightStick = StickMode.JoystickMove(Stick.RIGHT, invertY = true, deadzone = 0.12f),
+                leftPad = PadMode.None,
+                rightPad = PadMode.Mouse(sensitivity = 1.0f / 70f, invertY = true),
+                leftTrigger = TriggerMode.Axis(TriggerAxis.GAMEPAD_L2),
+                rightTrigger = TriggerMode.Axis(TriggerAxis.GAMEPAD_R2),
+                gyro = GyroMode.Mouse(sensitivity = 1.0f / 900f, gate = GyroGate.EITHER_GRIP),
+                haptics = HapticSettings(),
+            )
+        }
+    }
+}
