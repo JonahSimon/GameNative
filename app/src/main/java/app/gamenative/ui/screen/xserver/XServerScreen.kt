@@ -2253,10 +2253,8 @@ fun XServerScreen(
                                 // Compose's focus system does its own DPAD focus traversal + DPAD_CENTER activation,
                                 // independent of Android View focus (unlike Activity.dispatchKeyEvent, which routes to
                                 // the focused game SurfaceView and never reaches Compose).
-                                val isDialog = app.gamenative.ui.component.dialog.ScNavDialogStack.topView() != null
-                                val dn = target.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
-                                val up = target.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
-                                android.util.Log.i("ScNav", "nav key=$key code=$code dialog=$isDialog target=${target.javaClass.simpleName} hasWindowFocus=${target.hasWindowFocus()} consumedDown=$dn consumedUp=$up")
+                                target.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
+                                target.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
                             }
                         }
                     }

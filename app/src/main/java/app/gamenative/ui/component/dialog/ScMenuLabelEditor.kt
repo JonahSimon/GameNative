@@ -13,14 +13,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -60,8 +61,25 @@ fun ScMenuLabelEditorDialog(storeKey: String, onDismiss: () -> Unit) {
             shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                ScNavDialogCapture(onBack = onDismiss)
+            val nav = remember { ScNavState() }
+            // Which slot's on-screen keyboard is open (its "setId|LOCATION|slot" key), driven by d-pad A or a tap.
+            var editingKey by remember { mutableStateOf<String?>(null) }
+            val doSave = {
+                val overrides = edits.entries.mapNotNull { (k, v) ->
+                    val label = v.trim()
+                    if (label.isBlank()) return@mapNotNull null
+                    val parts = k.split("|")
+                    if (parts.size != 3) return@mapNotNull null
+                    MenuLabelOverride(parts[0], parts[1], parts[2].toIntOrNull() ?: return@mapNotNull null, label)
+                }
+                if (ScConfigStore.saveLabels(context, storeKey, ScMenuLabels(overrides))) {
+                    SnackbarManager.show(if (overrides.isEmpty()) "Custom labels cleared" else "Labels saved")
+                    onDismiss()
+                } else {
+                    SnackbarManager.show("Could not save labels")
+                }
+            }
+            ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.padding(16.dp)) {
                 Text("Menu labels", style = MaterialTheme.typography.titleLarge)
                 Text(
                     "Rename radial / touch-menu slots shown on the overlay. Leave blank to keep the default. " +
@@ -80,6 +98,7 @@ fun ScMenuLabelEditorDialog(storeKey: String, onDismiss: () -> Unit) {
                     )
                 } else {
                     Column(modifier = Modifier.weight(1f, fill = false).verticalScrollWithBar()) {
+                        var navLine = 0
                         for (menu in menus) {
                             val header = buildString {
                                 append(menu.location.label); append(" · "); append(menu.kind)
@@ -93,14 +112,16 @@ fun ScMenuLabelEditorDialog(storeKey: String, onDismiss: () -> Unit) {
                             )
                             menu.slotDefaults.forEachIndexed { i, default ->
                                 val key = "${menu.setId}|${menu.location.name}|$i"
-                                OutlinedTextField(
-                                    value = edits[key] ?: "",
-                                    onValueChange = { edits[key] = it },
-                                    label = { Text("Slot ${i + 1}") },
-                                    placeholder = { Text(default) },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                )
+                                ScNavItem(nav, line = navLine++, modifier = Modifier.fillMaxWidth(), onActivate = { editingKey = key }) {
+                                    ScTextEditField(
+                                        label = "Slot ${i + 1}  (default: $default)",
+                                        value = edits[key] ?: "",
+                                        onValueChange = { edits[key] = it },
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        editing = editingKey == key,
+                                        onEditingChange = { editingKey = if (it) key else null },
+                                    )
+                                }
                             }
                         }
                     }
@@ -112,26 +133,15 @@ fun ScMenuLabelEditorDialog(storeKey: String, onDismiss: () -> Unit) {
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    ScNavItem(nav, line = 9000, col = 0, onActivate = onDismiss) {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                    }
                     Spacer(Modifier.width(8.dp))
-                    Button(
-                        enabled = menus.isNotEmpty(),
-                        onClick = {
-                            val overrides = edits.entries.mapNotNull { (k, v) ->
-                                val label = v.trim()
-                                if (label.isBlank()) return@mapNotNull null
-                                val parts = k.split("|")
-                                if (parts.size != 3) return@mapNotNull null
-                                MenuLabelOverride(parts[0], parts[1], parts[2].toIntOrNull() ?: return@mapNotNull null, label)
-                            }
-                            if (ScConfigStore.saveLabels(context, storeKey, ScMenuLabels(overrides))) {
-                                SnackbarManager.show(if (overrides.isEmpty()) "Custom labels cleared" else "Labels saved")
-                                onDismiss()
-                            } else {
-                                SnackbarManager.show("Could not save labels")
-                            }
-                        },
-                    ) { Text("Save") }
+                    if (menus.isNotEmpty()) {
+                        ScNavItem(nav, line = 9000, col = 1, onActivate = doSave) {
+                            Button(onClick = doSave) { Text("Save") }
+                        }
+                    }
                 }
             }
         }

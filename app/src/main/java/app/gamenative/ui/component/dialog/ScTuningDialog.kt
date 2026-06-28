@@ -43,8 +43,17 @@ fun ScTuningDialog(onApply: () -> Unit, onDismiss: () -> Unit) {
             shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface,
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                ScNavDialogCapture(onBack = onDismiss)
+            val nav = remember { ScNavState() }
+            // D-pad LEFT/RIGHT nudge each slider 1 point at a time (hold to auto-repeat), persisting + applying live.
+            val nudgeDeadzone: (Int) -> Unit = { d ->
+                deadzone = (deadzone + d).coerceIn(ScTuningStore.MIN_DEADZONE, ScTuningStore.MAX_DEADZONE)
+                ScTuningStore.setDeadzone(context, deadzone); onApply()
+            }
+            val nudgeSmoothing: (Int) -> Unit = { d ->
+                smoothing = (smoothing + d).coerceIn(ScTuningStore.MIN_SMOOTHING, ScTuningStore.MAX_SMOOTHING)
+                ScTuningStore.setSmoothing(context, smoothing); onApply()
+            }
+            ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.padding(16.dp)) {
                 Text("Touchpad & menus", style = MaterialTheme.typography.titleLarge)
                 Text(
                     "Changes apply to the running game immediately.",
@@ -53,25 +62,29 @@ fun ScTuningDialog(onApply: () -> Unit, onDismiss: () -> Unit) {
                 )
                 HorizontalDivider()
 
-                Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                    Text("Touchpad deadzone: $deadzone")
-                    Slider(
-                        value = deadzone.toFloat(),
-                        onValueChange = { deadzone = it.roundToInt().coerceIn(ScTuningStore.MIN_DEADZONE, ScTuningStore.MAX_DEADZONE) },
-                        onValueChangeFinished = { ScTuningStore.setDeadzone(context, deadzone); onApply() },
-                        valueRange = ScTuningStore.MIN_DEADZONE.toFloat()..ScTuningStore.MAX_DEADZONE.toFloat(),
-                    )
-                    Text("Higher = steadier cursor at rest.", style = MaterialTheme.typography.bodySmall)
+                ScNavItem(nav, line = 0, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeDeadzone, onActivate = {}) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text("Touchpad deadzone: $deadzone   ◀ ▶")
+                        Slider(
+                            value = deadzone.toFloat(),
+                            onValueChange = { deadzone = it.roundToInt().coerceIn(ScTuningStore.MIN_DEADZONE, ScTuningStore.MAX_DEADZONE) },
+                            onValueChangeFinished = { ScTuningStore.setDeadzone(context, deadzone); onApply() },
+                            valueRange = ScTuningStore.MIN_DEADZONE.toFloat()..ScTuningStore.MAX_DEADZONE.toFloat(),
+                        )
+                        Text("Higher = steadier cursor at rest.", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
-                Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                    Text("Touchpad smoothing: $smoothing%")
-                    Slider(
-                        value = smoothing.toFloat(),
-                        onValueChange = { smoothing = it.roundToInt().coerceIn(ScTuningStore.MIN_SMOOTHING, ScTuningStore.MAX_SMOOTHING) },
-                        onValueChangeFinished = { ScTuningStore.setSmoothing(context, smoothing); onApply() },
-                        valueRange = ScTuningStore.MIN_SMOOTHING.toFloat()..ScTuningStore.MAX_SMOOTHING.toFloat(),
-                    )
-                    Text("Higher = smoother motion + keyboard cursor, but more lag.", style = MaterialTheme.typography.bodySmall)
+                ScNavItem(nav, line = 1, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeSmoothing, onActivate = {}) {
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text("Touchpad smoothing: $smoothing%   ◀ ▶")
+                        Slider(
+                            value = smoothing.toFloat(),
+                            onValueChange = { smoothing = it.roundToInt().coerceIn(ScTuningStore.MIN_SMOOTHING, ScTuningStore.MAX_SMOOTHING) },
+                            onValueChangeFinished = { ScTuningStore.setSmoothing(context, smoothing); onApply() },
+                            valueRange = ScTuningStore.MIN_SMOOTHING.toFloat()..ScTuningStore.MAX_SMOOTHING.toFloat(),
+                        )
+                        Text("Higher = smoother motion + keyboard cursor, but more lag.", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     Text("Touch-menu commit")
@@ -81,19 +94,20 @@ fun ScTuningDialog(onApply: () -> Unit, onDismiss: () -> Unit) {
                             ScTuningStore.MENU_COMMIT_CLICK to "Click",
                             ScTuningStore.MENU_COMMIT_RELEASE to "Release",
                         )
-                        options.forEach { (value, label) ->
-                            FilterChip(
-                                selected = menuCommit == value,
-                                onClick = { menuCommit = value; ScTuningStore.setMenuCommit(context, value); onApply() },
-                                label = { Text(label) },
-                            )
+                        options.forEachIndexed { i, (value, label) ->
+                            val pick = { menuCommit = value; ScTuningStore.setMenuCommit(context, value); onApply() }
+                            ScNavItem(nav, line = 2, col = i, onActivate = pick) {
+                                FilterChip(selected = menuCommit == value, onClick = pick, label = { Text(label) })
+                            }
                         }
                     }
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                    Button(onClick = onDismiss) { Text("Done") }
+                    ScNavItem(nav, line = 3, onActivate = onDismiss) {
+                        Button(onClick = onDismiss) { Text("Done") }
+                    }
                 }
             }
         }

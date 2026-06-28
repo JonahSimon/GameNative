@@ -78,7 +78,6 @@ fun ScOverlayEditorDialog(
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.82f))) {
-            ScNavDialogCapture(onBack = onDismiss)  // (drag/pinch is touch-only; this lets the controller close it)
             AndroidView(
                 factory = { (menuView ?: kbView)!! },
                 modifier = Modifier
@@ -97,39 +96,74 @@ fun ScOverlayEditorDialog(
             )
 
             Text(
-                text = "Drag to move • pinch to resize",
+                text = "Drag / d-pad to move • pinch / ◀ ▶ to resize",
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 24.dp),
             )
 
-            Row(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            // Controller controls: d-pad up/down picks a row, left/right nudges position/size; the button row is
+            // navigable too. (Touch drag/pinch + the SC pad-cursor still drive the overlay directly above.)
+            val nav = remember { ScNavState() }
+            val nudgeX: (Int) -> Unit = { d -> layout = layout.copy(cx = layout.cx + d * 0.02f).clamped() }
+            val nudgeY: (Int) -> Unit = { d -> layout = layout.copy(cy = layout.cy + d * 0.02f).clamped() }
+            val nudgeScale: (Int) -> Unit = { d -> layout = layout.copy(scale = layout.scale * if (d > 0) 1.05f else 1f / 1.05f).clamped() }
+            ScNavDialogColumn(
+                nav,
+                onBack = onDismiss,
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.5f)).padding(12.dp),
             ) {
-                if (!keyboard) {
-                    OutlinedButton(onClick = { radialPreview = !radialPreview }) {
-                        Text(if (radialPreview) "Preview: Radial" else "Preview: Grid")
+                ScNavItem(nav, line = 0, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeX, onActivate = {}) {
+                    Text("Horizontal position   ◀ ▶", color = Color.White, modifier = Modifier.padding(vertical = 4.dp))
+                }
+                ScNavItem(nav, line = 1, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeY, onActivate = {}) {
+                    Text("Vertical position   ◀ up  ▶ down", color = Color.White, modifier = Modifier.padding(vertical = 4.dp))
+                }
+                ScNavItem(nav, line = 2, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeScale, onActivate = {}) {
+                    Text("Size   ◀ smaller  ▶ bigger", color = Color.White, modifier = Modifier.padding(vertical = 4.dp))
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                ) {
+                    var col = 0
+                    if (!keyboard) {
+                        val togglePreview = { radialPreview = !radialPreview }
+                        ScNavItem(nav, line = 10, col = col++, onActivate = togglePreview) {
+                            OutlinedButton(onClick = togglePreview) {
+                                Text(if (radialPreview) "Preview: Radial" else "Preview: Grid")
+                            }
+                        }
+                    }
+                    val doReset = { layout = if (keyboard) ScOverlayStore.KEYBOARD_DEFAULT else ScOverlayLayout() }
+                    ScNavItem(nav, line = 10, col = col++, onActivate = doReset) {
+                        OutlinedButton(onClick = doReset) { Text("Reset") }
+                    }
+                    if (!isShared) {
+                        val useGlobal = {
+                            if (keyboard) ScOverlayStore.clearKeyboard(context, storeKey)
+                            else ScOverlayStore.clear(context, storeKey)
+                            SnackbarManager.show("Using global default")
+                            onDismiss()
+                        }
+                        ScNavItem(nav, line = 10, col = col++, onActivate = useGlobal) {
+                            OutlinedButton(onClick = useGlobal) { Text("Use global") }
+                        }
+                    }
+                    ScNavItem(nav, line = 10, col = col++, onActivate = onDismiss) {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                    }
+                    val doSave = {
+                        if (keyboard) ScOverlayStore.saveKeyboard(context, storeKey, layout)
+                        else ScOverlayStore.save(context, storeKey, layout)
+                        SnackbarManager.show("Overlay layout saved")
+                        onDismiss()
+                    }
+                    ScNavItem(nav, line = 10, col = col++, onActivate = doSave) {
+                        Button(onClick = doSave) { Text("Save") }
                     }
                 }
-                OutlinedButton(onClick = {
-                    layout = if (keyboard) ScOverlayStore.KEYBOARD_DEFAULT else ScOverlayLayout()
-                }) { Text("Reset") }
-                if (!isShared) {
-                    OutlinedButton(onClick = {
-                        if (keyboard) ScOverlayStore.clearKeyboard(context, storeKey)
-                        else ScOverlayStore.clear(context, storeKey)
-                        SnackbarManager.show("Using global default")
-                        onDismiss()
-                    }) { Text("Use global") }
-                }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-                Button(onClick = {
-                    if (keyboard) ScOverlayStore.saveKeyboard(context, storeKey, layout)
-                    else ScOverlayStore.save(context, storeKey, layout)
-                    SnackbarManager.show("Overlay layout saved")
-                    onDismiss()
-                }) { Text("Save") }
             }
         }
     }
