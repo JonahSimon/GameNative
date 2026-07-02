@@ -68,6 +68,30 @@ object ScOverlayStore {
             .apply()
     }
 
+    // ---- Per-menu placement ("m_<menuId>_" namespace) ----
+    // Each menu (identified by its host surface, e.g. "LEFT_PAD") can sit in its own spot. Resolution falls back
+    // gracefully so nothing regresses: per-menu-per-game → per-menu-global → the game-wide menu HUD placement
+    // ([forKey], keyed bare) → the global menu default → built-in. So an existing whole-HUD placement still
+    // applies to every menu until a per-menu override refines one.
+    private fun menuKey(menuId: String, key: String) = "m_${menuId}_$key"
+
+    /** Resolved layout for one menu instance on [gameKey]. See the fallback chain above. */
+    fun forMenu(context: Context, gameKey: String?, menuId: String): ScOverlayLayout {
+        if (menuId.isBlank()) return forKey(context, gameKey)
+        val p = prefs(context)
+        if (gameKey != null && has(p, menuKey(menuId, gameKey))) return read(p, menuKey(menuId, gameKey))
+        if (has(p, menuKey(menuId, DEFAULT_KEY))) return read(p, menuKey(menuId, DEFAULT_KEY))
+        return forKey(context, gameKey) // fall back to the whole-HUD placement (per-game → global → built-in)
+    }
+
+    fun saveMenu(context: Context, gameKey: String, menuId: String, layout: ScOverlayLayout) =
+        save(context, menuKey(menuId, gameKey), layout)
+
+    /** Whether a per-menu override exists for exactly this (game, menu) — for the editor's "Use global" state. */
+    fun hasMenu(context: Context, gameKey: String, menuId: String) = has(prefs(context), menuKey(menuId, gameKey))
+
+    fun clearMenu(context: Context, gameKey: String, menuId: String) = clear(context, menuKey(menuId, gameKey))
+
     // ---- Keyboard overlay (separate placement, "kb_" namespace) ----
     /** Resolved keyboard layout for [key]: own → global default → built-in [KEYBOARD_DEFAULT]. */
     fun forKeyboard(context: Context, key: String?): ScOverlayLayout {

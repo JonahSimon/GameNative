@@ -239,6 +239,7 @@ class TritonMapper(
         }
         interp.setPadTuning(ScTuningStore.deadzone(context), ScTuningStore.smoothing(context))
         interp.setMenuCommit(ScTuningStore.menuCommit(context))
+        (menuOverlay as? ScMenuOverlayView)?.refreshLayouts() // pick up in-game per-menu overlay placement edits
         Log.i(TAG, "reloaded (key=$configKey, cfg=${cfg != null}, sets=${cfg?.sets?.keys})")
     }
 

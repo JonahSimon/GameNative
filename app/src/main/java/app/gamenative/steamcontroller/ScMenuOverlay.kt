@@ -31,6 +31,9 @@ data class ScMenuSpec(
      *  Lets the HUD show exactly where the thumb points (incl. resting over the center "Wait" hub). */
     val cursorX: Float = Float.NaN,
     val cursorY: Float = Float.NaN,
+    /** Which surface hosts this menu ("LEFT_PAD"/"RIGHT_PAD"/"LEFT_STICK"/"RIGHT_STICK", = [ScMenuLocation.name]);
+     *  the overlay resolves per-menu placement by this id so each menu can sit in its own spot. "" = unscoped. */
+    val menuId: String = "",
 ) {
     enum class Kind { RADIAL, GRID }
 }

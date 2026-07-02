@@ -58,7 +58,7 @@ class ProfileInterpreter(
     private fun pushMenu(
         kind: ScMenuSpec.Kind, slots: List<MenuSlot>, cols: Int, rows: Int, highlighted: Int,
         center: MenuSlot? = null, directional: Boolean = false,
-        cursorX: Float = Float.NaN, cursorY: Float = Float.NaN,
+        cursorX: Float = Float.NaN, cursorY: Float = Float.NaN, menuId: String = "",
     ) {
         // Directional (movement) radials default to 8-way arrows, but a per-slot CUSTOM label always wins (so a
         // user can override the default arrow/key name). Non-directional menus use the config/key label.
@@ -66,7 +66,7 @@ class ProfileInterpreter(
             slots.mapIndexed { i, s -> s.label.ifBlank { ARROW8[i] } }
         } else slots.map { slotLabel(it) }
         runCatching {
-            menuOverlay.showMenu(ScMenuSpec(kind, labels, cols, rows, highlighted, center?.let { slotLabel(it) }, cursorX, cursorY))
+            menuOverlay.showMenu(ScMenuSpec(kind, labels, cols, rows, highlighted, center?.let { slotLabel(it) }, cursorX, cursorY, menuId))
         }
     }
 
@@ -235,8 +235,8 @@ class ProfileInterpreter(
                 else -> {} // edge outputs handled below
             }
         }
-        applyStick(p.leftStick, s.leftStickX, s.leftStickY, s.has(TritonProtocol.BTN_L3), s.has(TritonProtocol.BTN_LSTICK_TOUCH), leftStickMenu)
-        applyStick(p.rightStick, s.rightStickX, s.rightStickY, s.has(TritonProtocol.BTN_R3), s.has(TritonProtocol.BTN_RSTICK_TOUCH), rightStickMenu)
+        applyStick(p.leftStick, s.leftStickX, s.leftStickY, s.has(TritonProtocol.BTN_L3), s.has(TritonProtocol.BTN_LSTICK_TOUCH), leftStickMenu, ScMenuLocation.LEFT_STICK.name)
+        applyStick(p.rightStick, s.rightStickX, s.rightStickY, s.has(TritonProtocol.BTN_R3), s.has(TritonProtocol.BTN_RSTICK_TOUCH), rightStickMenu, ScMenuLocation.RIGHT_STICK.name)
         applyTrigger(p.leftTrigger, s.triggerLeft, leftTrig)
         applyTrigger(p.rightTrigger, s.triggerRight, rightTrig)
 
@@ -252,8 +252,8 @@ class ProfileInterpreter(
         }
 
         // ---- trackpads (mode-driven: mouse / grid / d-pad / scroll) ----
-        applyPad(p.leftPad, leftPad, s, TritonProtocol.BTN_LPAD_TOUCH, TritonProtocol.BTN_LPAD_CLICK, s.leftPadX, s.leftPadY)
-        applyPad(p.rightPad, rightPad, s, TritonProtocol.BTN_RPAD_TOUCH, TritonProtocol.BTN_RPAD_CLICK, s.rightPadX, s.rightPadY)
+        applyPad(p.leftPad, leftPad, s, TritonProtocol.BTN_LPAD_TOUCH, TritonProtocol.BTN_LPAD_CLICK, s.leftPadX, s.leftPadY, ScMenuLocation.LEFT_PAD.name)
+        applyPad(p.rightPad, rightPad, s, TritonProtocol.BTN_RPAD_TOUCH, TritonProtocol.BTN_RPAD_CLICK, s.rightPadX, s.rightPadY, ScMenuLocation.RIGHT_PAD.name)
 
         // ---- gyro -> mouse aim ----
         applyGyro(p.gyro, s)
@@ -522,16 +522,17 @@ class ProfileInterpreter(
 
     private fun pulse(out: ScOutput) { pressOutput(out); releaseOutput(out) }
 
-    private fun applyStick(mode: StickMode, rawX: Int, rawY: Int, clicked: Boolean, touched: Boolean, menuRt: MenuRuntime) {
+    private fun applyStick(mode: StickMode, rawX: Int, rawY: Int, clicked: Boolean, touched: Boolean, menuRt: MenuRuntime, menuId: String) {
         when (mode) {
             is StickMode.RadialMenu -> driveMenu(
                 stickMag(rawX, rawY) >= mode.deadzone, touched, clicked, rawX, rawY,
                 mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, commitOnClick = effectiveCommit(false), menuRt,
-                center = mode.center, directional = mode.directional,
+                center = mode.center, directional = mode.directional, menuId = menuId,
             )
             is StickMode.TouchMenu -> driveMenu(
                 stickMag(rawX, rawY) >= mode.deadzone, touched, clicked, rawX, rawY,
                 mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, commitOnClick = effectiveCommit(false), menuRt,
+                menuId = menuId,
             )
             is StickMode.JoystickMove -> {
                 val x = axisCurved(rawX, mode.deadzone, mode.curve)
@@ -590,7 +591,7 @@ class ProfileInterpreter(
         }
     }
 
-    private fun applyPad(mode: PadMode, rt: PadRuntime, s: TritonState, touchBit: Int, clickBit: Int, x: Int, y: Int) {
+    private fun applyPad(mode: PadMode, rt: PadRuntime, s: TritonState, touchBit: Int, clickBit: Int, x: Int, y: Int, menuId: String) {
         when (mode) {
             PadMode.None -> {
                 rt.mouseActive = false; releaseGridCell(mode, rt)
@@ -601,8 +602,8 @@ class ProfileInterpreter(
             is PadMode.ButtonPadGrid -> applyPadGrid(mode, rt, s.has(if (mode.onClick) clickBit else touchBit), x, y)
             is PadMode.DPad -> applyPadDpad(mode, rt, s.has(touchBit), x, y)
             is PadMode.ScrollWheel -> applyPadScroll(mode, rt, s.has(touchBit), y)
-            is PadMode.RadialMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, effectiveCommit(mode.onClick), rt.menu, center = mode.center, directional = mode.directional)
-            is PadMode.TouchMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, effectiveCommit(mode.onClick), rt.menu)
+            is PadMode.RadialMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, effectiveCommit(mode.onClick), rt.menu, center = mode.center, directional = mode.directional, menuId = menuId)
+            is PadMode.TouchMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, effectiveCommit(mode.onClick), rt.menu, menuId = menuId)
         }
     }
 
@@ -628,7 +629,7 @@ class ProfileInterpreter(
         active: Boolean, shown: Boolean, clicked: Boolean, x: Int, y: Int,
         slots: List<MenuSlot>, kind: ScMenuSpec.Kind, cols: Int, rows: Int,
         activation: MenuActivation, commitOnClick: Boolean, rt: MenuRuntime,
-        center: MenuSlot? = null, directional: Boolean = false,
+        center: MenuSlot? = null, directional: Boolean = false, menuId: String = "",
     ) {
         if (slots.isEmpty()) { rt.active = active; rt.shown = shown; return }
         val now = clock()
@@ -670,7 +671,7 @@ class ProfileInterpreter(
                     }
                 }
             }
-            pushMenu(kind, slots, cols, rows, rt.slot, center, directional, curX, curY)
+            pushMenu(kind, slots, cols, rows, rt.slot, center, directional, curX, curY, menuId)
         } else {
             // Not engaged (centered / finger lifted). If we WERE engaged, finalize the just-ended deflection.
             if (rt.active) {
@@ -687,7 +688,7 @@ class ProfileInterpreter(
             }
             // HUD: keep it visible while the source is still *touched* (thumb resting on the stick / finger on the
             // pad) even before deflecting — show the ring with nothing highlighted; hide once the source is released.
-            if (shown) { rt.slot = -1; pushMenu(kind, slots, cols, rows, -1, center, directional, curX, curY) }
+            if (shown) { rt.slot = -1; pushMenu(kind, slots, cols, rows, -1, center, directional, curX, curY, menuId) }
             else if (rt.shown || rt.active) hideMenu()
         }
         rt.active = active

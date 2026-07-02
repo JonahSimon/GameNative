@@ -23,8 +23,15 @@ class ScMenuOverlayView(context: Context) : View(context), ScMenuOverlay {
 
     @Volatile private var spec: ScMenuSpec? = null
     // Placement + size (scale, center fraction); set from ScOverlayStore. Default is intentionally smaller
-    // than 1.0 (user feedback: the HUD was a bit large) and centered.
+    // than 1.0 (user feedback: the HUD was a bit large) and centered. Used directly by the editor preview (which
+    // pushes an explicit layout via setLayout); the live game instead resolves per-menu (see [gameKey]).
     @Volatile private var layout = ScOverlayLayout()
+    // Live game: resolve each menu's placement per its [ScMenuSpec.menuId] via ScOverlayStore.forMenu, keyed by
+    // this game. Null = editor/preview mode, which uses the pushed [layout] instead. Cache avoids a prefs read
+    // per frame; refreshLayouts() clears it after an in-game overlay edit so the change applies live.
+    @Volatile var gameKey: String? = null
+    private val layoutCache = java.util.concurrent.ConcurrentHashMap<String, ScOverlayLayout>()
+    fun refreshLayouts() { layoutCache.clear(); postInvalidate() }
     // Fade behaviour: the HUD is full-opacity while the control is being actively used (showMenu called each
     // report), and fades out over FADE_MS once interaction stops (hideMenu) — per the SC overlay UX.
     @Volatile private var fadingOut = false
@@ -89,7 +96,8 @@ class ScMenuOverlayView(context: Context) : View(context), ScMenuOverlay {
         } else 1f
 
         val layer = canvas.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (alpha * 255).toInt())
-        val l = layout
+        // Live game: per-menu placement (cached); editor/preview: the pushed layout.
+        val l = gameKey?.let { gk -> layoutCache.getOrPut(s.menuId) { ScOverlayStore.forMenu(context, gk, s.menuId) } } ?: layout
         when (s.kind) {
             ScMenuSpec.Kind.RADIAL -> drawRadial(canvas, s, l)
             ScMenuSpec.Kind.GRID -> drawGrid(canvas, s, l)

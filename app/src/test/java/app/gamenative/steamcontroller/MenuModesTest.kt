@@ -160,6 +160,7 @@ class MenuModesTest {
         // Thumb resting on the (centered) stick: HUD shows with nothing highlighted, cursor at the center hub.
         interp.apply(stickState(0, 0, touch = true))
         assertEquals(ScMenuSpec.Kind.RADIAL, overlay.last?.kind)
+        assertEquals("LEFT_STICK", overlay.last?.menuId) // the source id is threaded through for per-menu placement
         assertEquals(-1, overlay.last?.highlighted)
         assertEquals(0f, overlay.last!!.cursorX, 0.02f)
         assertEquals(0f, overlay.last!!.cursorY, 0.02f)

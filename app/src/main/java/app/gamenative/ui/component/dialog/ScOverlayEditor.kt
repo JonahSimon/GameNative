@@ -28,8 +28,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.gamenative.steamcontroller.ScConfigStore
 import app.gamenative.steamcontroller.ScKeyboardOverlayView
 import app.gamenative.steamcontroller.ScKeyboardSpec
+import app.gamenative.steamcontroller.ScMenuLabelTool
+import app.gamenative.steamcontroller.ScMenuLocation
 import app.gamenative.steamcontroller.ScMenuOverlayView
 import app.gamenative.steamcontroller.ScMenuSpec
 import app.gamenative.steamcontroller.ScOverlayLayout
@@ -55,12 +58,21 @@ fun ScOverlayEditorDialog(
 ) {
     val context = LocalContext.current
     val keyboard = target == ScOverlayTarget.KEYBOARD
-    var layout by remember {
-        mutableStateOf(
-            if (keyboard) ScOverlayStore.forKeyboard(context, storeKey)
-            else ScOverlayStore.forKey(context, storeKey),
-        )
+    // MENU only: the menus actually present in this game's config (one entry per host surface). Lets the user
+    // place each menu independently; null selection = the whole-HUD placement (the pre-per-menu behavior).
+    val presentMenus = remember(storeKey) {
+        if (keyboard || isShared) emptyList()
+        else ScConfigStore.rawConfig(context, storeKey)?.let { ScMenuLabelTool.enumerate(it) }?.map { it.location }?.distinct() ?: emptyList()
     }
+    var selectedMenu by remember { mutableStateOf<ScMenuLocation?>(null) } // null = All menus (whole HUD)
+    fun stored(sel: ScMenuLocation?): ScOverlayLayout = when {
+        keyboard -> ScOverlayStore.forKeyboard(context, storeKey)
+        sel != null -> ScOverlayStore.forMenu(context, storeKey, sel.name)
+        else -> ScOverlayStore.forKey(context, storeKey)
+    }
+    var layout by remember { mutableStateOf(stored(null)) }
+    // Reload the layout when the selected menu changes (so each menu edits its own stored placement).
+    LaunchedEffect(selectedMenu) { layout = stored(selectedMenu) }
     var radialPreview by remember { mutableStateOf(true) } // MENU only: radial vs grid sample
     val menuView = remember { if (keyboard) null else ScMenuOverlayView(context) }
     val kbView = remember { if (keyboard) ScKeyboardOverlayView(context) else null }
@@ -114,13 +126,28 @@ fun ScOverlayEditorDialog(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .background(Color.Black.copy(alpha = 0.5f)).padding(12.dp),
             ) {
-                ScNavItem(nav, line = 0, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeX, onActivate = {}) {
+                // Menu selector (per-menu placement): cycle All menus ↔ each menu present in this game's config.
+                if (presentMenus.isNotEmpty()) {
+                    val options = listOf<ScMenuLocation?>(null) + presentMenus
+                    val cycleMenu: (Int) -> Unit = { d ->
+                        val i = options.indexOf(selectedMenu).coerceAtLeast(0)
+                        selectedMenu = options[((i + d) % options.size + options.size) % options.size]
+                    }
+                    ScNavItem(nav, line = 0, modifier = Modifier.fillMaxWidth(), onHorizontal = cycleMenu, onActivate = {}) {
+                        Text(
+                            "Placing:  ${selectedMenu?.label ?: "All menus"}   ◀ ▶",
+                            color = Color.White,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    }
+                }
+                ScNavItem(nav, line = 1, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeX, onActivate = {}) {
                     Text("Horizontal position   ◀ ▶", color = Color.White, modifier = Modifier.padding(vertical = 4.dp))
                 }
-                ScNavItem(nav, line = 1, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeY, onActivate = {}) {
+                ScNavItem(nav, line = 2, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeY, onActivate = {}) {
                     Text("Vertical position   ◀ up  ▶ down", color = Color.White, modifier = Modifier.padding(vertical = 4.dp))
                 }
-                ScNavItem(nav, line = 2, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeScale, onActivate = {}) {
+                ScNavItem(nav, line = 3, modifier = Modifier.fillMaxWidth(), onHorizontal = nudgeScale, onActivate = {}) {
                     Text("Size   ◀ smaller  ▶ bigger", color = Color.White, modifier = Modifier.padding(vertical = 4.dp))
                 }
                 Row(
@@ -141,22 +168,32 @@ fun ScOverlayEditorDialog(
                         OutlinedButton(onClick = doReset) { Text("Reset") }
                     }
                     if (!isShared) {
+                        // Revert this scope to its fallback: a per-menu selection → the whole-HUD placement; the
+                        // whole HUD → the global default. Keyboard → the global keyboard default.
+                        val perMenu = selectedMenu
                         val useGlobal = {
-                            if (keyboard) ScOverlayStore.clearKeyboard(context, storeKey)
-                            else ScOverlayStore.clear(context, storeKey)
-                            SnackbarManager.show("Using global default")
+                            when {
+                                keyboard -> ScOverlayStore.clearKeyboard(context, storeKey)
+                                perMenu != null -> ScOverlayStore.clearMenu(context, storeKey, perMenu.name)
+                                else -> ScOverlayStore.clear(context, storeKey)
+                            }
+                            SnackbarManager.show(if (perMenu != null) "Using the HUD default" else "Using global default")
                             onDismiss()
                         }
                         ScNavItem(nav, line = 10, col = col++, onActivate = useGlobal) {
-                            OutlinedButton(onClick = useGlobal) { Text("Use global") }
+                            OutlinedButton(onClick = useGlobal) { Text(if (perMenu != null) "Use HUD default" else "Use global") }
                         }
                     }
                     ScNavItem(nav, line = 10, col = col++, onActivate = onDismiss) {
                         TextButton(onClick = onDismiss) { Text("Cancel") }
                     }
+                    val perMenu = selectedMenu
                     val doSave = {
-                        if (keyboard) ScOverlayStore.saveKeyboard(context, storeKey, layout)
-                        else ScOverlayStore.save(context, storeKey, layout)
+                        when {
+                            keyboard -> ScOverlayStore.saveKeyboard(context, storeKey, layout)
+                            perMenu != null -> ScOverlayStore.saveMenu(context, storeKey, perMenu.name, layout)
+                            else -> ScOverlayStore.save(context, storeKey, layout)
+                        }
                         SnackbarManager.show("Overlay layout saved")
                         onDismiss()
                     }

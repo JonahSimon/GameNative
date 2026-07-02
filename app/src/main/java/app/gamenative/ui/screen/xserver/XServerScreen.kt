@@ -2220,8 +2220,9 @@ fun XServerScreen(
                     // UI issue can't block the controller. Falls back to a no-op overlay if attach fails.
                     val scMenuOverlay = runCatching {
                         app.gamenative.steamcontroller.ScMenuOverlayView(context).also { ov ->
-                            // Resolve the HUD placement/size: per-game override (keyed by appId) → global default.
-                            ov.setLayout(app.gamenative.steamcontroller.ScOverlayStore.forKey(context, appId))
+                            // Resolve each menu's placement/size at draw time, per-menu (keyed by appId + menuId),
+                            // falling back to the whole-HUD per-game/global placement. reload() refreshes it live.
+                            ov.gameKey = appId
                             gameHost.addView(
                                 ov,
                                 FrameLayout.LayoutParams(
