@@ -279,8 +279,6 @@ fun ContainerConfigDialog(
     default: Boolean = false,
     title: String,
     initialConfig: ContainerData = ContainerData(),
-    /** Container/appId this config belongs to; enables per-game Steam Controller config import. Null = default template. */
-    containerId: String? = null,
     onDismissRequest: () -> Unit,
     onSave: (ContainerData) -> Unit,
 ) {
@@ -1312,7 +1310,7 @@ fun ContainerConfigDialog(
                             if (selectedTab == 0) GeneralTabContent(state, nonzeroResolutionError, aspectResolutionError)
                             if (selectedTab == 1) GraphicsTabContent(state, default)
                             if (selectedTab == 2) EmulationTabContent(state)
-                            if (selectedTab == 3) ControllerTabContent(state, default, containerId)
+                            if (selectedTab == 3) ControllerTabContent(state, default)
                             if (selectedTab == 4) WineTabContent(state)
                             if (selectedTab == 5) WinComponentsTabContent(state)
                             if (selectedTab == 6) EnvironmentTabContent(state)

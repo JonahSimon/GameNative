@@ -244,6 +244,8 @@
     <string name="sc_edit_labels">SC: Menu Labels</string>
     <string name="sc_edit_tuning">SC: Touchpad &amp; Menus</string>
     <string name="sc_edit_layout">SC: Overlay Layout</string>
+    <string name="sc_edit_keyboard">SC: Keyboard Layout</string>
+    <string name="sc_edit_configs">SC: Manage Configs</string>
     <string name="controller_disconnected">Disconnected</string>
     <string name="reset_onscreen_controls">Reset On-Screen Controls</string>
     <string name="open_navigation_menu">Open Navigation Menu</string>

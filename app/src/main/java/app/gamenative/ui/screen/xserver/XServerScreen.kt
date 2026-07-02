@@ -108,6 +108,7 @@ import app.gamenative.service.gog.GOGService
 import app.gamenative.ui.component.QuickMenu
 import app.gamenative.ui.component.QuickMenuAction
 import app.gamenative.ui.component.dialog.ScMenuLabelEditorDialog
+import app.gamenative.ui.component.dialog.ScConfigManagerDialog
 import app.gamenative.ui.component.dialog.ScOverlayEditorDialog
 import app.gamenative.ui.component.dialog.ScOverlayTarget
 import app.gamenative.ui.component.dialog.ScTuningDialog
@@ -486,6 +487,8 @@ fun XServerScreen(
     var showScLabels by remember { mutableStateOf(false) }
     var showScTuning by remember { mutableStateOf(false) }
     var showScLayout by remember { mutableStateOf(false) }
+    var showScKeyboard by remember { mutableStateOf(false) }
+    var showScConfigs by remember { mutableStateOf(false) }
     // When a sub-editor is opened from the SC root hub, closing it (B / Back) should return to the hub — one level
     // at a time — instead of resuming the game. This flag records "came from the hub" so the sub-editor's dismiss
     // reopens the hub rather than calling scEditorDismiss (which would drop straight back to the game).
@@ -2914,6 +2917,8 @@ fun XServerScreen(
         showScLabels = showScLabels, onShowScLabels = { showScLabels = it },
         showScTuning = showScTuning, onShowScTuning = { showScTuning = it },
         showScLayout = showScLayout, onShowScLayout = { showScLayout = it },
+        showScKeyboard = showScKeyboard, onShowScKeyboard = { showScKeyboard = it },
+        showScConfigs = showScConfigs, onShowScConfigs = { showScConfigs = it },
         scReturnToRoot = scReturnToRoot, onScReturnToRoot = { scReturnToRoot = it },
         onFullDismiss = scEditorDismiss,
     )
@@ -2948,6 +2953,8 @@ private fun ScLiveEditorDialogs(
     showScLabels: Boolean, onShowScLabels: (Boolean) -> Unit,
     showScTuning: Boolean, onShowScTuning: (Boolean) -> Unit,
     showScLayout: Boolean, onShowScLayout: (Boolean) -> Unit,
+    showScKeyboard: Boolean, onShowScKeyboard: (Boolean) -> Unit,
+    showScConfigs: Boolean, onShowScConfigs: (Boolean) -> Unit,
     scReturnToRoot: Boolean, onScReturnToRoot: (Boolean) -> Unit,
     onFullDismiss: () -> Unit,
 ) {
@@ -2967,10 +2974,12 @@ private fun ScLiveEditorDialogs(
         // The hub items (label + the action that opens that sub-editor). Each opens its editor with scReturnToRoot=true
         // so B comes back here one level at a time.
         val items: List<Pair<Int, () -> Unit>> = listOf(
+            R.string.sc_edit_configs to { onShowScRoot(false); onScReturnToRoot(true); onShowScConfigs(true) },
             R.string.sc_edit_bindings to { onShowScRoot(false); onScReturnToRoot(true); onShowScBindings(true) },
             R.string.sc_edit_labels to { onShowScRoot(false); onScReturnToRoot(true); onShowScLabels(true) },
             R.string.sc_edit_tuning to { onShowScRoot(false); onScReturnToRoot(true); onShowScTuning(true) },
             R.string.sc_edit_layout to { onShowScRoot(false); onScReturnToRoot(true); onShowScLayout(true) },
+            R.string.sc_edit_keyboard to { onShowScRoot(false); onScReturnToRoot(true); onShowScKeyboard(true) },
         )
         // Controller nav is handled EXPLICITLY (a selection index + key handling on one focusable root) rather than
         // relying on Compose's inter-node DPAD focus traversal, which does not fire inside a Dialog window when no
@@ -3036,6 +3045,21 @@ private fun ScLiveEditorDialogs(
             isShared = false,
             target = ScOverlayTarget.MENU,
             onDismiss = { scSubEditorDismiss { onShowScLayout(false) } },
+        )
+    }
+    if (showScKeyboard) {
+        ScOverlayEditorDialog(
+            storeKey = appId,
+            isShared = false,
+            target = ScOverlayTarget.KEYBOARD,
+            onDismiss = { scSubEditorDismiss { onShowScKeyboard(false) } },
+        )
+    }
+    if (showScConfigs) {
+        ScConfigManagerDialog(
+            storeKey = appId,
+            onChanged = { runCatching { tritonMapper?.reload() } },
+            onDismiss = { scSubEditorDismiss { onShowScConfigs(false) } },
         )
     }
 }

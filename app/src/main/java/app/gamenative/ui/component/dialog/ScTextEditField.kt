@@ -86,9 +86,10 @@ fun ScTextEditField(
     }
 }
 
-/** Compact cursor-clickable keyboard. No system IME — types into a local string committed on Done. */
+/** Compact cursor-clickable keyboard. No system IME — types into a local string committed on Done. Also used as a
+ *  standalone name-entry prompt (e.g. the config manager's duplicate/rename). */
 @Composable
-private fun ScOnScreenKeyboardDialog(
+fun ScOnScreenKeyboardDialog(
     label: String,
     initial: String,
     onCancel: () -> Unit,
