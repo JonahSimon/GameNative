@@ -134,6 +134,28 @@ class ScKeyboardTest {
     }
 
     @Test
+    fun `symbol page types a shifted symbol then Abc returns to letters`() {
+        val sink = RecordingSink()
+        val kb = ScKeyboard(sink)
+        kb.activate()
+        // Toggle to the symbol page via the Sym key (right half).
+        val sym = ScKeyboardLayout.RIGHT.indexOf(KbKey.Sym)
+        kb.update(right(sym, click = false)); kb.update(right(sym, click = true))
+        // "!" is LEFT_SYM[0] = Shift+KEY_1 (forceShift). Clicking it holds Shift around the keycode.
+        assertEquals("!", (ScKeyboardLayout.LEFT_SYM[0] as KbKey.Chr).label)
+        kb.update(left(0, click = false)); kb.update(left(0, click = true))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_1))
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_SHIFT_L && it.pressed })
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_SHIFT_L && !it.pressed })
+        // Abc key returns to the letter page: same left-half cell 0 is now "1", no forced shift.
+        val abc = ScKeyboardLayout.RIGHT_SYM.indexOf(KbKey.Abc)
+        kb.update(right(abc, click = false)); kb.update(right(abc, click = true))
+        kb.update(left(0, click = false)); kb.update(left(0, click = true))
+        assertEquals(2, sink.keyPresses(XKeycode.KEY_1)) // "!" and "1" both fire KEY_1
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_SHIFT_L && it.pressed }) // but letter '1' held no shift
+    }
+
+    @Test
     fun `trigger pull also commits`() {
         val sink = RecordingSink()
         val kb = ScKeyboard(sink)

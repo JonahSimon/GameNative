@@ -14,13 +14,16 @@ import com.winlator.xserver.XKeycode
 
 /** One key on the on-screen keyboard. */
 sealed class KbKey(val label: String) {
-    /** A character key that injects [code] (with Shift held when the keyboard's shift is on). */
-    class Chr(val code: XKeycode, label: String) : KbKey(label)
+    /** A character key that injects [code]. Shift is held when the keyboard's sticky shift is on, OR when
+     *  [forceShift] is set (used by symbol-page keys that are always the shifted glyph, e.g. `!` = Shift+1). */
+    class Chr(val code: XKeycode, label: String, val forceShift: Boolean = false) : KbKey(label)
     object Shift : KbKey("⇧ Shift") // sticky shift (capital for the next letter)
     object Backspace : KbKey("⌫")  // ⌫
     object Space : KbKey("space")
     object Enter : KbKey("⏎ Enter")
     object Close : KbKey("✕")      // ✕ close the keyboard
+    object Sym : KbKey("?123")     // switch to the symbol page
+    object Abc : KbKey("ABC")      // switch back to the letter page
     object Empty : KbKey("")            // unused cell
 }
 
@@ -30,6 +33,8 @@ object ScKeyboardLayout {
     const val ROWS = 5
 
     private fun k(ch: Char): KbKey = KbKey.Chr(XKeycode.valueOf("KEY_" + ch.uppercaseChar()), ch.toString())
+    /** A symbol key: injects [code], holding Shift for the shifted glyph (e.g. `!` = Shift+KEY_1). */
+    private fun s(code: XKeycode, label: String, shift: Boolean = false) = KbKey.Chr(code, label, forceShift = shift)
 
     val LEFT: List<KbKey> = listOf(
         k('1'), k('2'), k('3'), k('4'), k('5'),
@@ -43,9 +48,30 @@ object ScKeyboardLayout {
         k('6'), k('7'), k('8'), k('9'), k('0'),
         k('y'), k('u'), k('i'), k('o'), k('p'),
         k('h'), k('j'), k('k'), k('l'), KbKey.Enter,
-        k('n'), k('m'), KbKey.Backspace, KbKey.Close, KbKey.Empty,
+        k('n'), k('m'), KbKey.Backspace, KbKey.Close, KbKey.Sym,
         KbKey.Space, KbKey.Empty, KbKey.Empty, KbKey.Empty, KbKey.Empty,
     )
+
+    // Symbol page — same 5×5 split; functional keys (Shift/Space/Enter/Backspace/Close/toggle) stay in place, the
+    // character cells become symbols. Shifted glyphs (! @ # …) hold Shift over the base keycode.
+    val LEFT_SYM: List<KbKey> = listOf(
+        s(XKeycode.KEY_1, "!", true), s(XKeycode.KEY_2, "@", true), s(XKeycode.KEY_3, "#", true), s(XKeycode.KEY_4, "$", true), s(XKeycode.KEY_5, "%", true),
+        s(XKeycode.KEY_6, "^", true), s(XKeycode.KEY_7, "&", true), s(XKeycode.KEY_8, "*", true), s(XKeycode.KEY_9, "(", true), s(XKeycode.KEY_0, ")", true),
+        s(XKeycode.KEY_MINUS, "-"), s(XKeycode.KEY_MINUS, "_", true), s(XKeycode.KEY_EQUAL, "="), s(XKeycode.KEY_EQUAL, "+", true), s(XKeycode.KEY_BACKSLASH, "\\"),
+        s(XKeycode.KEY_BACKSLASH, "|", true), s(XKeycode.KEY_SEMICOLON, ";"), s(XKeycode.KEY_SEMICOLON, ":", true), s(XKeycode.KEY_APOSTROPHE, "'"), s(XKeycode.KEY_APOSTROPHE, "\"", true),
+        KbKey.Shift, s(XKeycode.KEY_GRAVE, "`"), s(XKeycode.KEY_GRAVE, "~", true), s(XKeycode.KEY_SLASH, "/"), KbKey.Space,
+    )
+
+    val RIGHT_SYM: List<KbKey> = listOf(
+        s(XKeycode.KEY_BRACKET_LEFT, "["), s(XKeycode.KEY_BRACKET_RIGHT, "]"), s(XKeycode.KEY_BRACKET_LEFT, "{", true), s(XKeycode.KEY_BRACKET_RIGHT, "}", true), s(XKeycode.KEY_SLASH, "?", true),
+        s(XKeycode.KEY_COMMA, "<", true), s(XKeycode.KEY_PERIOD, ">", true), s(XKeycode.KEY_COMMA, ","), s(XKeycode.KEY_PERIOD, "."), KbKey.Empty,
+        KbKey.Empty, KbKey.Empty, KbKey.Empty, KbKey.Empty, KbKey.Enter,
+        KbKey.Empty, KbKey.Empty, KbKey.Backspace, KbKey.Close, KbKey.Abc,
+        KbKey.Space, KbKey.Empty, KbKey.Empty, KbKey.Empty, KbKey.Empty,
+    )
+
+    fun leftFor(symbols: Boolean): List<KbKey> = if (symbols) LEFT_SYM else LEFT
+    fun rightFor(symbols: Boolean): List<KbKey> = if (symbols) RIGHT_SYM else RIGHT
 
     /** Pad position (raw ±32768, +Y up) → cell index in a [COLS]×[ROWS] grid (row 0 = top), or -1 if out of range. */
     fun cellAt(x: Int, y: Int): Int {
@@ -72,6 +98,7 @@ data class ScKeyboardSpec(
     val leftCursor: Int, val rightCursor: Int, val shift: Boolean,
     val leftX: Float = -1f, val leftY: Float = -1f,
     val rightX: Float = -1f, val rightY: Float = -1f,
+    val symbols: Boolean = false,
 )
 
 object NoOpScKeyboardOverlay : ScKeyboardOverlay {
@@ -101,6 +128,7 @@ class ScKeyboard(
     var active = false
         private set
     private var shift = false
+    private var symbols = false // symbol page vs the letter page (toggled by Sym/Abc)
     private var leftCursor = -1
     private var rightCursor = -1
     private var leftX = -1f
@@ -122,7 +150,7 @@ class ScKeyboard(
     private val rRepeat = SideRepeat()
 
     fun activate() {
-        active = true; shift = false; leftCursor = -1; rightCursor = -1
+        active = true; shift = false; symbols = false; leftCursor = -1; rightCursor = -1
         leftX = -1f; leftY = -1f; rightX = -1f; rightY = -1f; prevButtons = 0
         smLeftX = Float.NaN; smLeftY = Float.NaN; smRightX = Float.NaN; smRightY = Float.NaN
         lRepeat.reset(); rRepeat.reset()
@@ -152,7 +180,7 @@ class ScKeyboard(
         leftCursor = newLeft
         leftX = if (lTouch) normX(lx) else -1f
         leftY = if (lTouch) normY(ly) else -1f
-        fireSide(s, leftCursor, ScKeyboardLayout.LEFT, TritonHaptics.SIDE_LEFT_PAD, now, lRepeat,
+        fireSide(s, leftCursor, ScKeyboardLayout.leftFor(symbols), TritonHaptics.SIDE_LEFT_PAD, now, lRepeat,
             TritonProtocol.BTN_LPAD_CLICK, TritonProtocol.BTN_LTRIG_CLICK)
         // RIGHT half
         val rTouch = s.has(TritonProtocol.BTN_RPAD_TOUCH)
@@ -166,7 +194,7 @@ class ScKeyboard(
         rightCursor = newRight
         rightX = if (rTouch) normX(rx) else -1f
         rightY = if (rTouch) normY(ry) else -1f
-        if (active) fireSide(s, rightCursor, ScKeyboardLayout.RIGHT, TritonHaptics.SIDE_RIGHT_PAD, now, rRepeat,
+        if (active) fireSide(s, rightCursor, ScKeyboardLayout.rightFor(symbols), TritonHaptics.SIDE_RIGHT_PAD, now, rRepeat,
             TritonProtocol.BTN_RPAD_CLICK, TritonProtocol.BTN_RTRIG_CLICK)
         prevButtons = s.buttons
         if (active) push() else runCatching { overlay.hide() }
@@ -208,16 +236,17 @@ class ScKeyboard(
     private fun fire(key: KbKey?) {
         when (key) {
             is KbKey.Chr -> {
-                if (shift) {
+                if (shift || key.forceShift) {
                     sink.key(XKeycode.KEY_SHIFT_L, true)
                     sink.key(key.code, true); sink.key(key.code, false)
                     sink.key(XKeycode.KEY_SHIFT_L, false)
-                    shift = false // sticky one-shot
+                    if (shift) shift = false // sticky one-shot (forceShift keys don't consume it)
                 } else {
                     sink.key(key.code, true); sink.key(key.code, false)
                 }
             }
             KbKey.Shift -> shift = !shift
+            KbKey.Sym, KbKey.Abc -> symbols = !symbols
             KbKey.Space -> pulse(XKeycode.KEY_SPACE)
             KbKey.Backspace -> pulse(XKeycode.KEY_BKSP)
             KbKey.Enter -> pulse(XKeycode.KEY_ENTER)
@@ -229,7 +258,7 @@ class ScKeyboard(
     private fun pulse(code: XKeycode) { sink.key(code, true); sink.key(code, false) }
 
     private fun push() {
-        runCatching { overlay.show(ScKeyboardSpec(leftCursor, rightCursor, shift, leftX, leftY, rightX, rightY)) }
+        runCatching { overlay.show(ScKeyboardSpec(leftCursor, rightCursor, shift, leftX, leftY, rightX, rightY, symbols)) }
     }
 
     /** Per-side key-repeat state: [cell] = the cell the held button pressed (-1 idle, -2 = slid off, suppressed). */

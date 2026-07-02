@@ -56,8 +56,8 @@ class ScKeyboardOverlayView(context: Context) : View(context), ScKeyboardOverlay
         // Local backdrop behind the keyboard (no full-screen dim).
         canvas.drawRoundRect(RectF(leftEdge - pad, top - pad, rightEdge + pad, bottom + pad), 18f, 18f, backdrop)
         text.textSize = 30f * l.scale
-        drawHalf(canvas, ScKeyboardLayout.LEFT, leftEdge, leftEdge + halfW, top, bottom, s.leftCursor, s.shift, s.leftX, s.leftY)
-        drawHalf(canvas, ScKeyboardLayout.RIGHT, rightEdge - halfW, rightEdge, top, bottom, s.rightCursor, s.shift, s.rightX, s.rightY)
+        drawHalf(canvas, ScKeyboardLayout.leftFor(s.symbols), leftEdge, leftEdge + halfW, top, bottom, s.leftCursor, s.shift, s.leftX, s.leftY)
+        drawHalf(canvas, ScKeyboardLayout.rightFor(s.symbols), rightEdge - halfW, rightEdge, top, bottom, s.rightCursor, s.shift, s.rightX, s.rightY)
     }
 
     private fun drawHalf(
