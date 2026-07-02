@@ -117,23 +117,9 @@ data class EditBinding(
     }
 
     companion object {
-        /** Build an [EditBinding] from a runtime output (no activator) — used to seed D-Pad direction outputs. */
-        fun fromOutput(out: ScOutput): EditBinding = when (out) {
-            is ScOutput.Key -> EditBinding(OutputKind.KEY, keys = out.keys.map { it.name })
-            is ScOutput.GamepadButton -> EditBinding(OutputKind.GAMEPAD_BUTTON, gamepadIdx = out.idx)
-            is ScOutput.GamepadDpad -> EditBinding(OutputKind.GAMEPAD_DPAD, dpadIndex = out.index)
-            is ScOutput.MouseButton -> EditBinding(OutputKind.MOUSE_BUTTON, mouseButton = out.button.name)
-            is ScOutput.SwitchActionSet -> EditBinding(
-                OutputKind.SWITCH_ACTION_SET, targetSetId = out.targetSetId,
-                activator = if (out.onRelease) EditActivator.RELEASE else EditActivator.REGULAR,
-            )
-            is ScOutput.MouseNudge -> EditBinding(OutputKind.MOUSE_NUDGE, nudgeDx = out.dx, nudgeDy = out.dy)
-            is ScOutput.ShowKeyboard -> EditBinding(OutputKind.SHOW_KEYBOARD)
-            is ScOutput.OpenQuickMenu -> EditBinding(OutputKind.OPEN_QUICK_MENU)
-            is ScOutput.LayerOp -> EditBinding(OutputKind.LAYER_OP, layerId = out.layerId, layerOp = out.op.name)
-            // Anything still not authorable (mode-shift) -> preserve as INHERIT (not flatten to NONE).
-            else -> out.advancedDesc()?.let { EditBinding(OutputKind.INHERIT, inheritDesc = it) } ?: EditBinding(OutputKind.NONE)
-        }
+        /** Build an [EditBinding] from a bare runtime output (no activator) — used to seed D-Pad / staged-trigger
+         *  outputs. A bare [Binding] carries the default [Activator.Regular], so this is exactly [Binding.toEdit]. */
+        fun fromOutput(out: ScOutput): EditBinding = Binding(out).toEdit()
     }
 }
 

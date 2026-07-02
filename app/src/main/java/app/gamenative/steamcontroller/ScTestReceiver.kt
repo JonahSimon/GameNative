@@ -43,19 +43,6 @@ class ScTestReceiver : BroadcastReceiver() {
                 Log.i(TAG, "installsmoke key='$k' saved=$ok -> ${ScConfigStore.fileFor(app, k)} ; " +
                     "readback sets=${readback?.sets?.keys} default=${readback?.defaultSetId}")
             }
-            "installeditable" -> {
-                // Round-trips the authored-profile (.json) branch of ScConfigStore on hardware: rebind A -> KEY_5.
-                val k = key ?: "demo"
-                val edit = ScEditableProfile(
-                    name = "Receiver Test",
-                    buttons = mapOf(ScSource.A.name to EditBinding(kind = OutputKind.KEY, keys = listOf("KEY_5"))),
-                )
-                val ok = ScConfigStore.saveEditable(app, k, edit)
-                val readback = ScConfigStore.forKey(app, k)
-                val aOut = readback?.defaultProfile()?.buttons?.get(ScSource.A.bit)?.output
-                Log.i(TAG, "installeditable key='$k' saved=$ok ; forKey -> '${readback?.defaultProfile()?.name}' " +
-                    "sets=${readback?.sets?.keys} A=$aOut")
-            }
             "peek" -> {
                 val k = key ?: "demo"
                 val cfg = ScConfigStore.forKey(app, k)

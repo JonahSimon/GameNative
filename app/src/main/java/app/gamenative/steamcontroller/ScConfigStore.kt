@@ -281,10 +281,6 @@ object ScConfigStore {
         return importVdfConfig(context, key, vdfText) != null
     }
 
-    /** Save a single [ScEditableProfile] (debug/back-compat) as an authored config via [saveEditableConfig]. */
-    fun saveEditable(context: Context, key: String, profile: ScEditableProfile): Boolean =
-        saveEditableConfig(context, key, ScEditableConfig.fromSingle(profile))
-
     /** Remove all imported `.vdf` configs for [key]. Returns true if any were removed. */
     fun removeConfig(context: Context, key: String): Boolean = removeByKind(context, key, ScConfigKind.VDF)
 
