@@ -41,10 +41,22 @@ import app.gamenative.ui.util.SnackbarManager
  * menus the resolved config actually has and lets the user rename each slot. Blank = keep the default label.
  */
 @Composable
-fun ScMenuLabelEditorDialog(storeKey: String, onDismiss: () -> Unit) {
+fun ScMenuLabelEditorDialog(
+    storeKey: String,
+    onDismiss: () -> Unit,
+    // When set, scope the editor to a single menu (its set + location) — used by the bindings editor's inline
+    // "Rename slots…" affordance so labels live in one place. Null = list every menu (the full standalone view).
+    filterSetId: String? = null,
+    filterLocation: String? = null,
+) {
     val context = LocalContext.current
     val cfg = remember(storeKey) { ScConfigStore.rawConfig(context, storeKey) }
-    val menus = remember(storeKey) { cfg?.let { ScMenuLabelTool.enumerate(it) } ?: emptyList() }
+    val allMenus = remember(storeKey) { cfg?.let { ScMenuLabelTool.enumerate(it) } ?: emptyList() }
+    val menus = remember(storeKey, filterSetId, filterLocation) {
+        if (filterSetId == null && filterLocation == null) allMenus
+        else allMenus.filter { it.setId == filterSetId && it.location.name == filterLocation }
+    }
+    val scoped = filterSetId != null || filterLocation != null
     val multiSet = remember(storeKey) { (cfg?.sets?.size ?: 0) > 1 }
     // Edited labels keyed by "setId|LOCATION|slot"; seeded from the stored overrides.
     val edits = remember(storeKey) {
@@ -80,10 +92,9 @@ fun ScMenuLabelEditorDialog(storeKey: String, onDismiss: () -> Unit) {
                 }
             }
             ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.padding(16.dp)) {
-                Text("Menu labels", style = MaterialTheme.typography.titleLarge)
+                Text(if (scoped) "Rename slots" else "Menu labels", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Rename radial / touch-menu slots shown on the overlay. Leave blank to keep the default. " +
-                        "Applies on next launch.",
+                    "Rename radial / touch-menu slots shown on the overlay. Leave blank to keep the default.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
                 )

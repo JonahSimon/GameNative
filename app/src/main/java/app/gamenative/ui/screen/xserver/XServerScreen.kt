@@ -107,7 +107,6 @@ import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
 import app.gamenative.ui.component.QuickMenu
 import app.gamenative.ui.component.QuickMenuAction
-import app.gamenative.ui.component.dialog.ScMenuLabelEditorDialog
 import app.gamenative.ui.component.dialog.ScConfigManagerDialog
 import app.gamenative.ui.component.dialog.ScOverlayEditorDialog
 import app.gamenative.ui.component.dialog.ScOverlayTarget
@@ -484,7 +483,6 @@ fun XServerScreen(
     // Steam Controller in-game live editors (shown from the QuickMenu CONTROLLER tab when an SC is connected).
     var showScRoot by remember { mutableStateOf(false) }
     var showScBindings by remember { mutableStateOf(false) }
-    var showScLabels by remember { mutableStateOf(false) }
     var showScTuning by remember { mutableStateOf(false) }
     var showScLayout by remember { mutableStateOf(false) }
     var showScKeyboard by remember { mutableStateOf(false) }
@@ -1236,7 +1234,6 @@ fun XServerScreen(
             // so the change applies to the running game with no relaunch.
             QuickMenuAction.SC_ROOT -> { keepPausedForEditor = true; showScRoot = true; true }
             QuickMenuAction.SC_BINDINGS -> { keepPausedForEditor = true; showScBindings = true; true }
-            QuickMenuAction.SC_LABELS -> { keepPausedForEditor = true; showScLabels = true; true }
             QuickMenuAction.SC_TUNING -> { keepPausedForEditor = true; showScTuning = true; true }
             QuickMenuAction.SC_LAYOUT -> { keepPausedForEditor = true; showScLayout = true; true }
 
@@ -2914,7 +2911,6 @@ fun XServerScreen(
         tritonMapper = tritonMapper,
         showScRoot = showScRoot, onShowScRoot = { showScRoot = it },
         showScBindings = showScBindings, onShowScBindings = { showScBindings = it },
-        showScLabels = showScLabels, onShowScLabels = { showScLabels = it },
         showScTuning = showScTuning, onShowScTuning = { showScTuning = it },
         showScLayout = showScLayout, onShowScLayout = { showScLayout = it },
         showScKeyboard = showScKeyboard, onShowScKeyboard = { showScKeyboard = it },
@@ -2950,7 +2946,6 @@ private fun ScLiveEditorDialogs(
     tritonMapper: app.gamenative.steamcontroller.TritonMapper?,
     showScRoot: Boolean, onShowScRoot: (Boolean) -> Unit,
     showScBindings: Boolean, onShowScBindings: (Boolean) -> Unit,
-    showScLabels: Boolean, onShowScLabels: (Boolean) -> Unit,
     showScTuning: Boolean, onShowScTuning: (Boolean) -> Unit,
     showScLayout: Boolean, onShowScLayout: (Boolean) -> Unit,
     showScKeyboard: Boolean, onShowScKeyboard: (Boolean) -> Unit,
@@ -2976,7 +2971,6 @@ private fun ScLiveEditorDialogs(
         val items: List<Pair<Int, () -> Unit>> = listOf(
             R.string.sc_edit_configs to { onShowScRoot(false); onScReturnToRoot(true); onShowScConfigs(true) },
             R.string.sc_edit_bindings to { onShowScRoot(false); onScReturnToRoot(true); onShowScBindings(true) },
-            R.string.sc_edit_labels to { onShowScRoot(false); onScReturnToRoot(true); onShowScLabels(true) },
             R.string.sc_edit_tuning to { onShowScRoot(false); onScReturnToRoot(true); onShowScTuning(true) },
             R.string.sc_edit_layout to { onShowScRoot(false); onScReturnToRoot(true); onShowScLayout(true) },
             R.string.sc_edit_keyboard to { onShowScRoot(false); onScReturnToRoot(true); onShowScKeyboard(true) },
@@ -3032,9 +3026,6 @@ private fun ScLiveEditorDialogs(
     }
     if (showScBindings) {
         SteamControllerBindingEditorDialog(containerId = appId, onDismiss = { scSubEditorDismiss { onShowScBindings(false) } })
-    }
-    if (showScLabels) {
-        ScMenuLabelEditorDialog(storeKey = appId, onDismiss = { scSubEditorDismiss { onShowScLabels(false) } })
     }
     if (showScTuning) {
         ScTuningDialog(onApply = { runCatching { tritonMapper?.reload() } }, onDismiss = { scSubEditorDismiss { onShowScTuning(false) } })

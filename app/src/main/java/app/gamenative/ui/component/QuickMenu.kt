@@ -111,7 +111,6 @@ object QuickMenuAction {
     const val DISABLE_MOUSE = 8
     // Steam Controller (Triton) live editors — shown in the CONTROLLER tab only when an SC is connected.
     const val SC_BINDINGS = 9
-    const val SC_LABELS = 10
     const val SC_TUNING = 11
     const val SC_LAYOUT = 12
     // Single root entry that opens the Steam Controller editor hub (lists the editors above).

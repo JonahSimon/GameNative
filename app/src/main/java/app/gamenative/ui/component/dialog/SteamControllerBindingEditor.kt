@@ -66,6 +66,8 @@ import app.gamenative.steamcontroller.GyroEditMode
 import app.gamenative.steamcontroller.OutputKind
 import app.gamenative.steamcontroller.TriggerEditMode
 import app.gamenative.steamcontroller.ScConfigStore
+import app.gamenative.steamcontroller.ScMenuLabelTool
+import app.gamenative.steamcontroller.ScMenuLocation
 import app.gamenative.steamcontroller.ScEditableConfig
 import app.gamenative.steamcontroller.ScEditableProfile
 import app.gamenative.steamcontroller.ScEditableSet
@@ -106,6 +108,13 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
     var editingTrigger by remember { mutableStateOf<TriggerSide?>(null) }
     var editingGyro by remember { mutableStateOf(false) }
     var editingHaptics by remember { mutableStateOf(false) }
+    // Menus from an imported .vdf / the built-in default aren't authored in this editor (they resolve as INHERIT),
+    // so their slot labels can't be renamed inline — enumerate them and offer a scoped "Rename slots…" affordance
+    // on the matching surface, keyed by (setId, location) and backed by the label overlay (ScMenuLabels).
+    val rawMenus = remember(containerId) {
+        runCatching { ScConfigStore.rawConfig(context, containerId)?.let { ScMenuLabelTool.enumerate(it) } }.getOrNull() ?: emptyList()
+    }
+    var renamingMenu by remember { mutableStateOf<Pair<String, ScMenuLocation>?>(null) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -156,7 +165,8 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
                 Text("Steam Controller bindings", style = MaterialTheme.typography.titleLarge)
                 Text(
                     "Tap a button to rebind it; tap a stick/trackpad, trigger, gyro, or haptics row to change its " +
-                        "behavior. Menus and action sets/layers still come from the built-in default / imported .vdf.",
+                        "behavior. Inherited menus (from the built-in default / imported .vdf) show a “Rename slots…” " +
+                        "action; authored menus rename their slots inside the surface's behavior editor.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
                 )
@@ -270,8 +280,18 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
                         )
                         for (surface in AnalogSurface.ALL) {
                             val open = { editingSurface = surface }
-                            ScNavItem(nav, line = navLine, modifier = Modifier.fillMaxWidth(), onActivate = open) {
+                            // An inherited menu here (base .vdf/default has one, but the editor doesn't author it) →
+                            // its slots aren't inline-editable, so surface a scoped "Rename slots…" affordance.
+                            val inheritedMenu = surface.get(profile) == null &&
+                                rawMenus.any { it.setId == activeSetId && it.location == surface.location }
+                            ScNavItem(nav, line = navLine, col = 0, modifier = Modifier.fillMaxWidth(), onActivate = open) {
                                 AnalogSurfaceRow(surface, surface.get(profile), onClick = open)
+                            }
+                            if (inheritedMenu) {
+                                val rename = { renamingMenu = activeSetId to surface.location }
+                                ScNavItem(nav, line = navLine, col = 1, modifier = Modifier.fillMaxWidth().padding(start = 16.dp), onActivate = rename) {
+                                    TextButton(onClick = rename) { Text("Rename slots…") }
+                                }
                             }
                             navLine++
                         }
@@ -354,6 +374,15 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
                 setProfile(surface.set(profile, newAnalog))
                 editingSurface = null
             },
+        )
+    }
+
+    renamingMenu?.let { (setId, loc) ->
+        ScMenuLabelEditorDialog(
+            storeKey = containerId,
+            filterSetId = setId,
+            filterLocation = loc.name,
+            onDismiss = { renamingMenu = null },
         )
     }
 
@@ -1146,11 +1175,11 @@ private fun summarize(b: EditBinding): String {
 // ---- Analog sources (Phase 2: per-surface behavior + settings) ----
 
 /** The four analog surfaces the editor authors a behavior for, with get/set accessors on [ScEditableProfile]. */
-private enum class AnalogSurface(val label: String, val isStick: Boolean) {
-    LEFT_STICK("Left Stick", true),
-    RIGHT_STICK("Right Stick", true),
-    LEFT_PAD("Left Pad", false),
-    RIGHT_PAD("Right Pad", false);
+private enum class AnalogSurface(val label: String, val isStick: Boolean, val location: ScMenuLocation) {
+    LEFT_STICK("Left Stick", true, ScMenuLocation.LEFT_STICK),
+    RIGHT_STICK("Right Stick", true, ScMenuLocation.RIGHT_STICK),
+    LEFT_PAD("Left Pad", false, ScMenuLocation.LEFT_PAD),
+    RIGHT_PAD("Right Pad", false, ScMenuLocation.RIGHT_PAD);
 
     fun get(p: ScEditableProfile): EditAnalog? = when (this) {
         LEFT_STICK -> p.leftStick; RIGHT_STICK -> p.rightStick; LEFT_PAD -> p.leftPad; RIGHT_PAD -> p.rightPad
