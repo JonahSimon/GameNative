@@ -14,6 +14,18 @@ class AdvancedModesTest {
     private fun stickState(lx: Int = 0, ly: Int = 0) = TritonState().apply { leftStickX = lx; leftStickY = ly }
 
     @Test
+    fun `gyro pad-touch gate aims only while the pad is touched`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.RIGHT_PAD_TOUCH)), haptics = null)
+        // Gyro rotating but pad NOT touched -> gated off, no aim.
+        interp.apply(TritonState().apply { gyroZ = 500; gyroX = 200 })
+        assertEquals(0, sink.mouseMoves)
+        // Same rotation while the right pad is touched -> aim fires.
+        interp.apply(TritonState().apply { gyroZ = 500; gyroX = 200; buttons = TritonProtocol.BTN_RPAD_TOUCH })
+        assertTrue("gyro aims while pad touched", sink.mouseMoves > 0)
+    }
+
+    @Test
     fun `joystick_mouse drives the pointer from stick deflection`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(leftStick = StickMode.Mouse(sensitivity = 10f, deadzone = 0.1f)), haptics = null)

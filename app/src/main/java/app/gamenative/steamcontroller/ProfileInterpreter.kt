@@ -870,6 +870,8 @@ class ProfileInterpreter(
                     GyroGate.LEFT_GRIP -> s.has(TritonProtocol.BTN_LGRIP)
                     GyroGate.RIGHT_GRIP -> s.has(TritonProtocol.BTN_RGRIP)
                     GyroGate.EITHER_GRIP -> s.has(TritonProtocol.BTN_LGRIP) || s.has(TritonProtocol.BTN_RGRIP)
+                    GyroGate.LEFT_PAD_TOUCH -> s.has(TritonProtocol.BTN_LPAD_TOUCH)
+                    GyroGate.RIGHT_PAD_TOUCH -> s.has(TritonProtocol.BTN_RPAD_TOUCH)
                 }
                 if (gated) {
                     val dx = (s.gyroZ * mode.sensitivity).toInt()   // yaw

@@ -562,7 +562,11 @@ private fun GyroPickerDialog(current: EditGyro, onDismiss: () -> Unit, onApply: 
                     Spacer(Modifier.height(8.dp))
                     LabeledDropdown(
                         "Active when",
-                        listOf("ALWAYS" to "Always on", "EITHER_GRIP" to "Either grip held", "LEFT_GRIP" to "Left grip held", "RIGHT_GRIP" to "Right grip held"),
+                        listOf(
+                            "ALWAYS" to "Always on", "EITHER_GRIP" to "Either grip held",
+                            "LEFT_GRIP" to "Left grip held", "RIGHT_GRIP" to "Right grip held",
+                            "RIGHT_PAD_TOUCH" to "Right pad touched", "LEFT_PAD_TOUCH" to "Left pad touched",
+                        ),
                         gate, nav = nav, navLine = 2,
                     ) { gate = it }
                 }

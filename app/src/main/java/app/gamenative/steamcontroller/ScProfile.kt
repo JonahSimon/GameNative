@@ -294,8 +294,9 @@ sealed class GyroMode {
     // Future (build step 2): Joystick (camera). Activation styles beyond grips: always/toggle/button/pad-touch.
 }
 
-/** When a gyro mode is active. */
-enum class GyroGate { ALWAYS, LEFT_GRIP, RIGHT_GRIP, EITHER_GRIP }
+/** When a gyro mode is active. Grips are the rear paddles; the pad-touch gates enable "touch-to-aim" (gyro only
+ *  while the aim trackpad is touched — the most common gyro-mouse style). */
+enum class GyroGate { ALWAYS, LEFT_GRIP, RIGHT_GRIP, EITHER_GRIP, LEFT_PAD_TOUCH, RIGHT_PAD_TOUCH }
 
 /**
  * Trackpad/haptic feel parameters — profile-driven so the binding-editor UI can expose full haptics control
