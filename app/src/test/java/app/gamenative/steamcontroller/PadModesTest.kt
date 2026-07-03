@@ -50,6 +50,17 @@ class PadModesTest {
     }
 
     @Test
+    fun `mouse position warps the cursor on button press`() {
+        val sink = RecordingSink()
+        val prof = ScProfile(buttons = mapOf(TritonProtocol.BTN_A to Binding(ScOutput.MousePosition(0.5f, 0.25f))))
+        val interp = ProfileInterpreter(sink, prof, haptics = null)
+        interp.apply(TritonState().apply { buttons = TritonProtocol.BTN_A }) // press -> warp
+        assertEquals(1, sink.mouseAbsMoves)
+        assertEquals(0.5f, sink.lastAbsX, 0.01f)
+        assertEquals(0.25f, sink.lastAbsY, 0.01f)
+    }
+
+    @Test
     fun `single-button pad fires on touch and releases on lift`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.SingleButton(ScOutput.Key(XKeycode.KEY_SPACE))), haptics = null)

@@ -847,6 +847,14 @@ object SteamControllerProfileImporter {
                         val dy = t.getOrNull(3)?.trimEnd(',')?.toIntOrNull() ?: 0
                         ScOutput.MouseNudge(dx, dy)
                     }
+                    "MOUSE_POSITION" -> {
+                        // controller_action MOUSE_POSITION <x> <y> <return> -> warp cursor (x,y in 0..32767 screen space).
+                        val x = t.getOrNull(2)?.trimEnd(',')?.toFloatOrNull()
+                        val y = t.getOrNull(3)?.trimEnd(',')?.toFloatOrNull()
+                        if (x != null && y != null) {
+                            ScOutput.MousePosition(x / 32767f, y / 32767f, t.getOrNull(4)?.trimEnd(',') == "1")
+                        } else null
+                    }
                     else -> { Timber.tag(TAG).d("unsupported controller_action '$cmd'"); null }
                 }
             }

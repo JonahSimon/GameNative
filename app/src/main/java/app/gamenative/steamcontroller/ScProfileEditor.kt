@@ -127,6 +127,7 @@ data class EditBinding(
  *  to label [OutputKind.INHERIT] bindings so a preserved layer/mode-shift binding doesn't read as "Unbound". */
 fun ScOutput.advancedDesc(): String? = when (this) {
     is ScOutput.ModeShift -> "Mode-shift $source"
+    is ScOutput.MousePosition -> "Mouse position"
     else -> null
 }
 

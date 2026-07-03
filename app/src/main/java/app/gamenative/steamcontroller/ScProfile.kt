@@ -66,6 +66,10 @@ sealed class ScOutput {
     /** A one-shot relative mouse nudge (Steam `controller_action mouse_delta dx dy`): emits a single
      *  [ScOutputSink.mouseMove] on the press edge. */
     data class MouseNudge(val dx: Int, val dy: Int) : ScOutput()
+    /** Warp the cursor to an absolute screen position (Steam `controller_action MOUSE_POSITION x y return`):
+     *  on the press edge emits [ScOutputSink.mouseMoveAbs] to ([nx],[ny]) (screen fraction 0..1). ([returnAfter]
+     *  auto-return-after is not yet honored — needs the sink to read the current position first.) */
+    data class MousePosition(val nx: Float, val ny: Float, val returnAfter: Boolean = false) : ScOutput()
 }
 
 enum class LayerOpType { ADD, HOLD, REMOVE }

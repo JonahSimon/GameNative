@@ -252,7 +252,7 @@ class ProfileInterpreter(
         val now = clock()
         for ((bit, b) in p.buttons) {
             when (b.output) {
-                is ScOutput.MouseButton, is ScOutput.Key, is ScOutput.MouseNudge -> applyActivator(bit, b, s, now)
+                is ScOutput.MouseButton, is ScOutput.Key, is ScOutput.MouseNudge, is ScOutput.MousePosition -> applyActivator(bit, b, s, now)
                 else -> {}
             }
         }
@@ -887,6 +887,7 @@ class ProfileInterpreter(
             is ScOutput.Key -> out.keys.forEach { sink.key(it, true) }
             is ScOutput.MouseButton -> sink.mouseButton(out.button, true)
             is ScOutput.MouseNudge -> if (out.dx != 0 || out.dy != 0) sink.mouseMove(out.dx, out.dy) // one-shot move
+            is ScOutput.MousePosition -> sink.mouseMoveAbs(out.nx, out.ny) // one-shot absolute warp
             else -> {}
         }
     }
