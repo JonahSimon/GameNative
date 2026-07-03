@@ -15,6 +15,8 @@ interface ScOutputSink {
     fun gamepad(state: GamepadState)
     /** Relative mouse motion. */
     fun mouseMove(dx: Int, dy: Int)
+    /** Absolute mouse position as a screen fraction (0..1, origin top-left). The sink scales to the X screen. */
+    fun mouseMoveAbs(nx: Float, ny: Float)
     /** Mouse button down/up. */
     fun mouseButton(button: Pointer.Button, pressed: Boolean)
     /** Keyboard key down/up. */
@@ -31,6 +33,13 @@ class XServerOutputSink(private val xServer: XServer) : ScOutputSink {
 
     override fun mouseMove(dx: Int, dy: Int) {
         xServer.injectPointerMoveDelta(dx, dy)
+    }
+
+    override fun mouseMoveAbs(nx: Float, ny: Float) {
+        val info = xServer.screenInfo ?: return
+        val x = (nx.coerceIn(0f, 1f) * (info.width - 1)).toInt()
+        val y = (ny.coerceIn(0f, 1f) * (info.height - 1)).toInt()
+        xServer.injectPointerMove(x, y)
     }
 
     override fun mouseButton(button: Pointer.Button, pressed: Boolean) {

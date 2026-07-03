@@ -174,6 +174,7 @@ object TritonEngineSelfTest {
             if (b != lastPad) { Log.i(TAG, "PAD buttons=0x${Integer.toHexString(b)}"); lastPad = b }
         }
         override fun mouseMove(dx: Int, dy: Int) {}
+        override fun mouseMoveAbs(nx: Float, ny: Float) {}
         override fun mouseButton(button: Pointer.Button, pressed: Boolean) {
             if (pressed) Log.i(TAG, "MOUSE $button down")
         }

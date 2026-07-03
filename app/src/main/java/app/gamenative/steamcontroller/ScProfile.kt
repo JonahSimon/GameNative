@@ -268,7 +268,19 @@ sealed class PadMode {
      * the overlay (step 6) will draw.
      */
     data class TouchMenu(val slots: List<MenuSlot>, val cols: Int, val rows: Int, val onClick: Boolean = false, val activation: MenuActivation = MenuActivation.COMMIT) : PadMode()
-    // Future: MouseRegion, JoystickMove, Trackball, ...
+    /**
+     * Absolute / region mouse (Steam `absolute_mouse` / `mouse_region`): while the pad is touched, the finger's
+     * absolute position maps 1:1 onto a screen [region] rectangle (normalized 0..1; the full screen = the whole
+     * desktop), warping the cursor there — unlike relative [Mouse], the cursor tracks WHERE the finger is, not how
+     * far it slid. The interpreter emits a normalized target ([ScOutputSink.mouseMoveAbs]); the sink scales it to
+     * the X screen geometry. [left]/[top]/[right]/[bottom] bound the region (default = full screen). [invertY]
+     * flips vertical (default: finger-up → cursor-up).
+     */
+    data class AbsoluteMouse(
+        val left: Float = 0f, val top: Float = 0f, val right: Float = 1f, val bottom: Float = 1f,
+        val invertY: Boolean = false,
+    ) : PadMode()
+    // Future: Trackball, ...
 }
 
 /** One entry of a Radial/Touch menu: the [binding] it fires on commit + a [label] (for the step-6 overlay). */

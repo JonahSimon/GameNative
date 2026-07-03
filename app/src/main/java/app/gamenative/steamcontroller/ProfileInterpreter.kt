@@ -599,6 +599,7 @@ class ProfileInterpreter(
                 rt.menu.slot = -1; rt.menu.active = false; rt.menu.heldSlot = -1
             }
             is PadMode.Mouse -> applyPadMouse(mode, rt, s.has(touchBit), x, y)
+            is PadMode.AbsoluteMouse -> applyPadAbsolute(mode, s.has(touchBit), x, y)
             is PadMode.ButtonPadGrid -> applyPadGrid(mode, rt, s.has(if (mode.onClick) clickBit else touchBit), x, y)
             is PadMode.DPad -> applyPadDpad(mode, rt, s.has(touchBit), x, y)
             is PadMode.ScrollWheel -> applyPadScroll(mode, rt, s.has(touchBit), y)
@@ -766,6 +767,18 @@ class ProfileInterpreter(
     private fun clickWheel(button: Pointer.Button) {
         sink.mouseButton(button, true)
         sink.mouseButton(button, false)
+    }
+
+    /** Absolute / region mouse: warp the cursor to where the finger is (mapped 1:1 onto the mode's screen region)
+     *  while the pad is touched. No deadzone/accumulation — it's a direct position, not a relative delta. */
+    private fun applyPadAbsolute(mode: PadMode.AbsoluteMouse, touched: Boolean, x: Int, y: Int) {
+        if (!touched) return
+        val px = (x / 65536f + 0.5f).coerceIn(0f, 1f)        // 0 = left, 1 = right
+        val pyUp = (y / 65536f + 0.5f).coerceIn(0f, 1f)      // 0 = bottom, 1 = top (pad reports +Y up)
+        val pyTop = if (mode.invertY) pyUp else 1f - pyUp    // 0 = screen top
+        val nx = mode.left + px * (mode.right - mode.left)
+        val ny = mode.top + pyTop * (mode.bottom - mode.top)
+        sink.mouseMoveAbs(nx.coerceIn(0f, 1f), ny.coerceIn(0f, 1f))
     }
 
     private fun applyPadMouse(mode: PadMode.Mouse, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {

@@ -27,6 +27,10 @@ class RecordingSink : ScOutputSink {
     var mouseDx = 0L; var mouseDy = 0L
     var mouseMoves = 0; private set
 
+    // Last absolute-mouse target (screen fraction 0..1) + count, for AbsoluteMouse pad tests.
+    var lastAbsX = -1f; var lastAbsY = -1f
+    var mouseAbsMoves = 0; private set
+
     val mouseButtons = ArrayList<MouseBtn>()
     val keys = ArrayList<KeyEv>()
 
@@ -41,6 +45,10 @@ class RecordingSink : ScOutputSink {
 
     override fun mouseMove(dx: Int, dy: Int) {
         mouseMoves++; mouseDx += dx; mouseDy += dy
+    }
+
+    override fun mouseMoveAbs(nx: Float, ny: Float) {
+        mouseAbsMoves++; lastAbsX = nx; lastAbsY = ny
     }
 
     override fun mouseButton(button: Pointer.Button, pressed: Boolean) {

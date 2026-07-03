@@ -22,6 +22,33 @@ class PadModesTest {
         return s
     }
 
+    @Test
+    fun `absolute mouse warps the cursor to the finger position`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.AbsoluteMouse()), haptics = null)
+        // Center of the pad -> center of the screen.
+        interp.apply(leftPadState(touch = true, x = 0, y = 0))
+        assertEquals(0.5f, sink.lastAbsX, 0.02f)
+        assertEquals(0.5f, sink.lastAbsY, 0.02f)
+        // Finger top-right (pad +X right, +Y up) -> screen top-right (nx→1, ny→0).
+        interp.apply(leftPadState(touch = true, x = 32767, y = 32767))
+        assertTrue("nx near right", sink.lastAbsX > 0.95f)
+        assertTrue("ny near top", sink.lastAbsY < 0.05f)
+        // Not touched -> no absolute move emitted for that report.
+        val before = sink.mouseAbsMoves
+        interp.apply(leftPadState(touch = false, x = 0, y = 0))
+        assertEquals(before, sink.mouseAbsMoves)
+    }
+
+    @Test
+    fun `absolute mouse maps into a screen region`() {
+        val sink = RecordingSink()
+        // Right half of the screen only.
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.AbsoluteMouse(left = 0.5f, right = 1f)), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 0, y = 0)) // pad center -> region center = 0.75 across
+        assertEquals(0.75f, sink.lastAbsX, 0.02f)
+    }
+
     // 2x2 grid: cells row-major, row 0 = BOTTOM, col 0 = LEFT.
     //   cell0 = bottom-left  -> F1
     //   cell1 = bottom-right -> F2

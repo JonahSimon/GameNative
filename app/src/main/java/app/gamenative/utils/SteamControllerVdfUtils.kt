@@ -546,10 +546,10 @@ object SteamControllerProfileImporter {
                 deadzone = readDeadzone(s, default = 0.35f),
             )
             "scrollwheel" -> PadMode.ScrollWheel()
-            "mouse_region", "absolute_mouse" -> {
-                Timber.tag(TAG).d("pad mode '$mode' -> approximating with relative Mouse (absolute TODO)")
-                mouse()
-            }
+            // Absolute / region mouse: the finger's position maps 1:1 onto the screen (cursor tracks WHERE the
+            // finger is, not how far it slid). Full-screen region for now; the mouse_region sub-rect params
+            // (mouse_region_*) need a real reference config to decode safely — TODO once we have one to diff.
+            "mouse_region", "absolute_mouse" -> PadMode.AbsoluteMouse(invertY = readInvertY(s, default = false))
             "mouse", "relative_mouse", "mouse_joystick" -> mouse()
             // Overlay-tier menus: the selection LOGIC is built (radial = angle→slot, touch = grid cell→slot,
             // commit pulses the slot). The visual ring/grid HUD is the step-6 overlay (separate). hotbar ≈ touch grid.
