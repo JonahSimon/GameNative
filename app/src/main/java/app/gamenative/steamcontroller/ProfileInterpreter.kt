@@ -176,6 +176,12 @@ class ProfileInterpreter(
         var gridCell = -1
         var scrollAccum = 0
         var dpadMask = 0
+        // Single-button pad: currently-pressed output (so we can release it). null = not pressed.
+        var singlePressed: ScOutput? = null
+        // Directional-swipe: anchor the flick is measured from (re-set each fresh touch), + last-fired dir gate.
+        var swipeAnchorX = 0
+        var swipeAnchorY = 0
+        var swipeTouched = false
         /** Radial/Touch menu state for a pad-driven menu. */
         val menu = MenuRuntime()
     }
@@ -597,9 +603,13 @@ class ProfileInterpreter(
                 rt.mouseActive = false; releaseGridCell(mode, rt)
                 if (rt.menu.active) hideMenu()
                 rt.menu.slot = -1; rt.menu.active = false; rt.menu.heldSlot = -1
+                if (rt.singlePressed != null) { releaseOutput(rt.singlePressed); rt.singlePressed = null }
+                rt.swipeTouched = false
             }
             is PadMode.Mouse -> applyPadMouse(mode, rt, s.has(touchBit), x, y)
             is PadMode.AbsoluteMouse -> applyPadAbsolute(mode, s.has(touchBit), x, y)
+            is PadMode.SingleButton -> applyPadSingle(mode, rt, s.has(if (mode.onClick) clickBit else touchBit))
+            is PadMode.DirectionalSwipe -> applyPadSwipe(mode, rt, s.has(touchBit), x, y)
             is PadMode.ButtonPadGrid -> applyPadGrid(mode, rt, s.has(if (mode.onClick) clickBit else touchBit), x, y)
             is PadMode.DPad -> applyPadDpad(mode, rt, s.has(touchBit), x, y)
             is PadMode.ScrollWheel -> applyPadScroll(mode, rt, s.has(touchBit), y)
@@ -775,11 +785,38 @@ class ProfileInterpreter(
         if (!touched) return
         val px = (x / 65536f + 0.5f).coerceIn(0f, 1f)        // 0 = left, 1 = right
         val pyUp = (y / 65536f + 0.5f).coerceIn(0f, 1f)      // 0 = bottom, 1 = top (pad reports +Y up)
-        val pyTop = if (mode.invertY) pyUp else 1f - pyUp    // 0 = screen top
-        val nx = mode.left + px * (mode.right - mode.left)
-        val ny = mode.top + pyTop * (mode.bottom - mode.top)
+        val fx = if (mode.invertX) 1f - px else px
+        val fyTop = if (mode.invertY) pyUp else 1f - pyUp    // 0 = screen top
+        // Map the pad extent onto the region centered at (centerX,centerY) spanning sizeX/sizeY of the screen.
+        val nx = mode.centerX + (fx - 0.5f) * mode.sizeX
+        val ny = mode.centerY + (fyTop - 0.5f) * mode.sizeY
         sink.mouseMoveAbs(nx.coerceIn(0f, 1f), ny.coerceIn(0f, 1f))
     }
+
+    /** Single-button pad: whole surface = one button, pressed while touched/clicked, released on lift. */
+    private fun applyPadSingle(mode: PadMode.SingleButton, rt: PadRuntime, engaged: Boolean) {
+        if (engaged && rt.singlePressed == null) { rt.singlePressed = mode.output; pressOutput(mode.output) }
+        else if (!engaged && rt.singlePressed != null) { releaseOutput(rt.singlePressed); rt.singlePressed = null }
+    }
+
+    /** Directional swipe: a flick past the threshold from the touch anchor pulses that cardinal direction's output,
+     *  then slides the anchor so a continued swipe keeps firing (scroll-like). Re-anchors on each fresh touch. */
+    private fun applyPadSwipe(mode: PadMode.DirectionalSwipe, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {
+        if (!touched) { rt.swipeTouched = false; return }
+        if (!rt.swipeTouched) { rt.swipeTouched = true; rt.swipeAnchorX = x; rt.swipeAnchorY = y; return }
+        val dx = x - rt.swipeAnchorX
+        val dy = y - rt.swipeAnchorY
+        val horiz = mode.scrollMode != SwipeAxes.VERTICAL
+        val vert = mode.scrollMode != SwipeAxes.HORIZONTAL
+        if (horiz && kotlin.math.abs(dx) >= mode.threshold && kotlin.math.abs(dx) >= kotlin.math.abs(dy)) {
+            pulseOutput(if (dx > 0) mode.right else mode.left); rt.swipeAnchorX = x; rt.swipeAnchorY = y
+        } else if (vert && kotlin.math.abs(dy) >= mode.threshold) {
+            pulseOutput(if (dy > 0) mode.up else mode.down); rt.swipeAnchorX = x; rt.swipeAnchorY = y // pad +Y up
+        }
+    }
+
+    /** Fire an edge output as a one-shot press+release pulse (for swipe / one-shot commands). */
+    private fun pulseOutput(out: ScOutput?) { if (out != null && out != ScOutput.None) { pressOutput(out); releaseOutput(out) } }
 
     private fun applyPadMouse(mode: PadMode.Mouse, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {
         if (!touched) { rt.mouseActive = false; return }

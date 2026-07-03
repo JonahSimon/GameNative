@@ -546,10 +546,29 @@ object SteamControllerProfileImporter {
                 deadzone = readDeadzone(s, default = 0.35f),
             )
             "scrollwheel" -> PadMode.ScrollWheel()
-            // Absolute / region mouse: the finger's position maps 1:1 onto the screen (cursor tracks WHERE the
-            // finger is, not how far it slid). Full-screen region for now; the mouse_region sub-rect params
-            // (mouse_region_*) need a real reference config to decode safely — TODO once we have one to diff.
-            "mouse_region", "absolute_mouse" -> PadMode.AbsoluteMouse(invertY = readInvertY(s, default = false))
+            // Absolute / region mouse: finger position → 1:1 screen position within a region. Steam params
+            // (confirmed): position_x/y (center %, def 50), scale (size %, def 80), scale_x/y (def 100), invert_x/y.
+            "mouse_region", "absolute_mouse" -> {
+                fun pct(key: String, def: Float) = (s?.getString(key)?.toFloatOrNull() ?: def) / 100f
+                val scale = pct("scale", 80f)
+                PadMode.AbsoluteMouse(
+                    centerX = pct("position_x", 50f), centerY = pct("position_y", 50f),
+                    sizeX = scale * pct("scale_x", 100f), sizeY = scale * pct("scale_y", 100f),
+                    invertX = s?.getString("invert_x") == "1", invertY = s?.getString("invert_y") == "1",
+                )
+            }
+            // Single-button pad (whole surface = one button). The vdf binds it on the "click" input; importPad
+            // already put that in buttons[clickBit] — move it into the mode so it fires on the pad (avoid double-bind).
+            "single_button" -> {
+                val out = buttons.remove(clickBit)?.output ?: extractInput(group, "click")?.output ?: ScOutput.None
+                PadMode.SingleButton(out, onClick = readRequiresClick(s))
+            }
+            // Directional swipe (Steam `2dscroll`): flick a cardinal direction → pulse that dir's output. Uses the
+            // dpad_* inputs, like a d-pad, but swipe-triggered.
+            "2dscroll" -> PadMode.DirectionalSwipe(
+                up = dirOut(group, "dpad_north"), down = dirOut(group, "dpad_south"),
+                left = dirOut(group, "dpad_west"), right = dirOut(group, "dpad_east"),
+            )
             "mouse", "relative_mouse", "mouse_joystick" -> mouse()
             // Overlay-tier menus: the selection LOGIC is built (radial = angle→slot, touch = grid cell→slot,
             // commit pulses the slot). The visual ring/grid HUD is the step-6 overlay (separate). hotbar ≈ touch grid.

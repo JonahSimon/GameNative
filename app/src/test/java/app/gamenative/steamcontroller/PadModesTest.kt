@@ -43,10 +43,36 @@ class PadModesTest {
     @Test
     fun `absolute mouse maps into a screen region`() {
         val sink = RecordingSink()
-        // Right half of the screen only.
-        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.AbsoluteMouse(left = 0.5f, right = 1f)), haptics = null)
+        // Right half of the screen only: center 0.75, width 0.5.
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.AbsoluteMouse(centerX = 0.75f, sizeX = 0.5f)), haptics = null)
         interp.apply(leftPadState(touch = true, x = 0, y = 0)) // pad center -> region center = 0.75 across
         assertEquals(0.75f, sink.lastAbsX, 0.02f)
+    }
+
+    @Test
+    fun `single-button pad fires on touch and releases on lift`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.SingleButton(ScOutput.Key(XKeycode.KEY_SPACE))), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 0, y = 0))
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_SPACE && it.pressed })
+        assertEquals(0, sink.keys.count { it.key == XKeycode.KEY_SPACE && !it.pressed })
+        interp.apply(leftPadState(touch = false, x = 0, y = 0))
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_SPACE && !it.pressed })
+    }
+
+    @Test
+    fun `directional swipe pulses the flicked direction`() {
+        val sink = RecordingSink()
+        val prof = ScProfile(leftPad = PadMode.DirectionalSwipe(
+            up = ScOutput.Key(XKeycode.KEY_W), down = ScOutput.Key(XKeycode.KEY_S),
+            left = ScOutput.Key(XKeycode.KEY_A), right = ScOutput.Key(XKeycode.KEY_D), threshold = 8000,
+        ))
+        val interp = ProfileInterpreter(sink, prof, haptics = null)
+        interp.apply(leftPadState(touch = true, x = 0, y = 0))       // anchor
+        interp.apply(leftPadState(touch = true, x = 20000, y = 0))   // flick right past threshold
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_D))
+        interp.apply(leftPadState(touch = true, x = 20000, y = 20000)) // flick up (pad +Y up)
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_W))
     }
 
     // 2x2 grid: cells row-major, row 0 = BOTTOM, col 0 = LEFT.

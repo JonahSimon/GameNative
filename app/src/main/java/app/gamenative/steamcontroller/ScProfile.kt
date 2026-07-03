@@ -277,11 +277,32 @@ sealed class PadMode {
      * flips vertical (default: finger-up → cursor-up).
      */
     data class AbsoluteMouse(
-        val left: Float = 0f, val top: Float = 0f, val right: Float = 1f, val bottom: Float = 1f,
-        val invertY: Boolean = false,
+        /** Region CENTER as a screen fraction (Steam `position_x/y` %/100; 0.5 = centered). */
+        val centerX: Float = 0.5f, val centerY: Float = 0.5f,
+        /** Region SIZE as a screen fraction (Steam `scale` %/100 × `scale_x/y` %/100; full screen = 1.0). */
+        val sizeX: Float = 1f, val sizeY: Float = 1f,
+        val invertX: Boolean = false, val invertY: Boolean = false,
     ) : PadMode()
-    // Future: Trackball, ...
+    /**
+     * Single-button pad (Steam `single_button`): touching/clicking anywhere on the pad fires [output]. No cursor,
+     * no menu — the whole surface is one button. [onClick] = fire on pad CLICK (else on TOUCH).
+     */
+    data class SingleButton(val output: ScOutput, val onClick: Boolean = false) : PadMode()
+    /**
+     * Directional swipe (Steam `2dscroll`): a quick flick in a cardinal direction pulses that direction's output.
+     * Unlike [DPad] (held while the finger stays deflected), a swipe fires once per flick past [threshold] then
+     * requires re-centering. Outputs are edge-style (Key/MouseButton/GamepadButton). [scrollMode] limits which axes
+     * are active (BOTH/HORIZONTAL/VERTICAL).
+     */
+    data class DirectionalSwipe(
+        val up: ScOutput, val down: ScOutput, val left: ScOutput, val right: ScOutput,
+        val threshold: Int = 8000, val scrollMode: SwipeAxes = SwipeAxes.BOTH,
+    ) : PadMode()
+    // Future: Trackball is an AbsoluteMouse/Mouse toggle, not a separate mode (see docs/STEAM-VDF-ADVANCED-SCHEMA.md).
 }
+
+/** Which axes a [PadMode.DirectionalSwipe] responds to (Steam scroll-wheel-mode). */
+enum class SwipeAxes { BOTH, HORIZONTAL, VERTICAL }
 
 /** One entry of a Radial/Touch menu: the [binding] it fires on commit + a [label] (for the step-6 overlay). */
 data class MenuSlot(val binding: Binding, val label: String = "")

@@ -293,8 +293,11 @@ data class EditAnalog(
         fun fromPad(m: PadMode): EditAnalog? = when (m) {
             is PadMode.None -> EditAnalog(AnalogMode.NONE)
             is PadMode.Mouse -> EditAnalog(AnalogMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_PAD_MOUSE_SENS * 100f).roundToInt(), invertY = m.invertY)
-            // Absolute/region mouse isn't authored in the editor yet → null = inherit (preserved losslessly on edit).
+            // Absolute/region mouse, single-button, directional-swipe aren't authored in the editor yet → null =
+            // inherit (preserved losslessly on edit; importer handles them).
             is PadMode.AbsoluteMouse -> null
+            is PadMode.SingleButton -> null
+            is PadMode.DirectionalSwipe -> null
             is PadMode.ScrollWheel -> EditAnalog(AnalogMode.SCROLL_WHEEL, scrollStep = m.step, invertY = m.invertY)
             is PadMode.DPad -> EditAnalog(
                 AnalogMode.DPAD, deadzonePct = (m.deadzone * 100f).roundToInt(),
