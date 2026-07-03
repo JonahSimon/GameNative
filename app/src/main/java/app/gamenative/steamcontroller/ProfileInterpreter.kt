@@ -245,6 +245,8 @@ class ProfileInterpreter(
         applyStick(p.rightStick, s.rightStickX, s.rightStickY, s.has(TritonProtocol.BTN_R3), s.has(TritonProtocol.BTN_RSTICK_TOUCH), rightStickMenu, ScMenuLocation.RIGHT_STICK.name)
         applyTrigger(p.leftTrigger, s.triggerLeft, leftTrig)
         applyTrigger(p.rightTrigger, s.triggerRight, rightTrig)
+        // Gyro before the pad push: a gyro-to-joystick mode adds to the stick, so it must land in this frame's gp.
+        applyGyro(p.gyro, s)
 
         sink.gamepad(gp)
 
@@ -261,8 +263,6 @@ class ProfileInterpreter(
         applyPad(p.leftPad, leftPad, s, TritonProtocol.BTN_LPAD_TOUCH, TritonProtocol.BTN_LPAD_CLICK, s.leftPadX, s.leftPadY, ScMenuLocation.LEFT_PAD.name)
         applyPad(p.rightPad, rightPad, s, TritonProtocol.BTN_RPAD_TOUCH, TritonProtocol.BTN_RPAD_CLICK, s.rightPadX, s.rightPadY, ScMenuLocation.RIGHT_PAD.name)
 
-        // ---- gyro -> mouse aim ----
-        applyGyro(p.gyro, s)
 
         // ---- regenerate trackpad haptics (profile-driven feel) ----
         haptics?.update(s, prevButtons, p.haptics)
@@ -900,21 +900,35 @@ class ProfileInterpreter(
         }
     }
 
+    private fun gyroGateOpen(gate: GyroGate, s: TritonState): Boolean = when (gate) {
+        GyroGate.ALWAYS -> true
+        GyroGate.LEFT_GRIP -> s.has(TritonProtocol.BTN_LGRIP)
+        GyroGate.RIGHT_GRIP -> s.has(TritonProtocol.BTN_RGRIP)
+        GyroGate.EITHER_GRIP -> s.has(TritonProtocol.BTN_LGRIP) || s.has(TritonProtocol.BTN_RGRIP)
+        GyroGate.LEFT_PAD_TOUCH -> s.has(TritonProtocol.BTN_LPAD_TOUCH)
+        GyroGate.RIGHT_PAD_TOUCH -> s.has(TritonProtocol.BTN_RPAD_TOUCH)
+    }
+
     private fun applyGyro(mode: GyroMode, s: TritonState) {
         when (mode) {
             is GyroMode.Mouse -> {
-                val gated = when (mode.gate) {
-                    GyroGate.ALWAYS -> true
-                    GyroGate.LEFT_GRIP -> s.has(TritonProtocol.BTN_LGRIP)
-                    GyroGate.RIGHT_GRIP -> s.has(TritonProtocol.BTN_RGRIP)
-                    GyroGate.EITHER_GRIP -> s.has(TritonProtocol.BTN_LGRIP) || s.has(TritonProtocol.BTN_RGRIP)
-                    GyroGate.LEFT_PAD_TOUCH -> s.has(TritonProtocol.BTN_LPAD_TOUCH)
-                    GyroGate.RIGHT_PAD_TOUCH -> s.has(TritonProtocol.BTN_RPAD_TOUCH)
-                }
-                if (gated) {
+                if (gyroGateOpen(mode.gate, s)) {
                     val dx = (s.gyroZ * mode.sensitivity).toInt()   // yaw
                     val dy = (s.gyroX * mode.sensitivity).toInt()   // pitch
                     if (dx != 0 || dy != 0) sink.mouseMove(dx, dy)
+                }
+            }
+            is GyroMode.Joystick -> {
+                // Gyro rate -> stick deflection (yaw→X, pitch→Y), ADDED on top of any physical stick when gated
+                // open (so gyro layers onto stick-look rather than fighting it); no-op when gated closed.
+                if (gyroGateOpen(mode.gate, s)) {
+                    val x = (s.gyroZ * mode.sensitivity).coerceIn(-1f, 1f)
+                    val y = (s.gyroX * mode.sensitivity).coerceIn(-1f, 1f)
+                    if (mode.stick == Stick.LEFT) {
+                        gp.thumbLX = (gp.thumbLX + x).coerceIn(-1f, 1f); gp.thumbLY = (gp.thumbLY + y).coerceIn(-1f, 1f)
+                    } else {
+                        gp.thumbRX = (gp.thumbRX + x).coerceIn(-1f, 1f); gp.thumbRY = (gp.thumbRY + y).coerceIn(-1f, 1f)
+                    }
                 }
             }
             GyroMode.None -> {}

@@ -26,6 +26,14 @@ class AdvancedModesTest {
     }
 
     @Test
+    fun `gyro joystick mode deflects the output stick`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Joystick(Stick.RIGHT, sensitivity = 0.001f, gate = GyroGate.ALWAYS)), haptics = null)
+        interp.apply(TritonState().apply { gyroZ = 500 }) // yaw -> right stick X (500 * 0.001 = 0.5)
+        assertTrue("right stick X deflected by gyro", sink.maxThumbRX > 0.4f)
+    }
+
+    @Test
     fun `joystick_mouse drives the pointer from stick deflection`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(leftStick = StickMode.Mouse(sensitivity = 10f, deadzone = 0.1f)), haptics = null)

@@ -316,7 +316,9 @@ sealed class GyroMode {
     object None : GyroMode()
     /** Gyro rate -> mouse aim delta, gated by [gate] (e.g. only while a grip is held). */
     data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP) : GyroMode()
-    // Future (build step 2): Joystick (camera). Activation styles beyond grips: always/toggle/button/pad-touch.
+    /** Gyro rate -> virtual XInput stick deflection (Steam `gyro_to_joystick` / `_deflection` — camera-style aim
+     *  on games with stick-only look). Yaw→X, pitch→Y, scaled by [sensitivity], gated by [gate]. */
+    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP) : GyroMode()
 }
 
 /** When a gyro mode is active. Grips are the rear paddles; the pad-touch gates enable "touch-to-aim" (gyro only

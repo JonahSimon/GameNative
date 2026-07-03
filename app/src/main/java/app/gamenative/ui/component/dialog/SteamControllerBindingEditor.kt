@@ -456,6 +456,7 @@ private fun summarizeGyro(g: EditGyro?): String = when (g?.mode) {
     null -> "Inherit (default)"
     GyroEditMode.OFF -> "Off"
     GyroEditMode.MOUSE -> "Mouse (${g.gate.lowercase().replace('_', ' ')})"
+    GyroEditMode.JOYSTICK -> "Joystick (${g.outputStick.lowercase()}, ${g.gate.lowercase().replace('_', ' ')})"
 }
 
 private fun summarizeHaptics(h: EditHaptics?): String = when {
@@ -618,6 +619,7 @@ private fun TriggerEditMode.uiLabel(): String = when (this) {
 private fun GyroEditMode.uiLabel(): String = when (this) {
     GyroEditMode.OFF -> "Off"
     GyroEditMode.MOUSE -> "As mouse (aim)"
+    GyroEditMode.JOYSTICK -> "As joystick (camera)"
 }
 
 @Composable

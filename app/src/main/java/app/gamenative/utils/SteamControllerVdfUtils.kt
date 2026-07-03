@@ -686,9 +686,13 @@ object SteamControllerProfileImporter {
 
     private fun importGyro(group: VdfObject): GyroMode {
         val s = group.getObject("settings")
+        // Confirmed vdf modes: gyro_to_mouse, gyro_to_joystick(_camera)/_deflection. `gyro_button` (activation button)
+        // isn't mapped to a bit yet → default to EITHER_GRIP gate (Steam's common default).
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
-            "mouse", "absolute_mouse", "mouse_region" ->
+            "gyro_to_mouse", "mouse", "absolute_mouse", "mouse_region" ->
                 GyroMode.Mouse((1.0f / 900f) * readSensScale(s), GyroGate.EITHER_GRIP)
+            "gyro_to_joystick", "gyro_to_joystick_camera", "gyro_to_joystick_deflection" ->
+                GyroMode.Joystick(Stick.RIGHT, (1.0f / 6000f) * readSensScale(s), GyroGate.EITHER_GRIP)
             "", "disabled" -> GyroMode.None
             else -> { Timber.tag(TAG).d("unsupported gyro mode '$mode' -> None"); GyroMode.None }
         }

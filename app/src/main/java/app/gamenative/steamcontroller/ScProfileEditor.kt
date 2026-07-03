@@ -382,26 +382,32 @@ data class EditTrigger(
 /** Editor representation of the gyro (Steam's gyro "Behavior"). OFF = disabled; MOUSE = gyro rate → mouse aim,
  *  gated by [gate] (when the gyro is active — e.g. only while a grip is held). */
 @Serializable
-enum class GyroEditMode { OFF, MOUSE }
+enum class GyroEditMode { OFF, MOUSE, JOYSTICK }
 
 @Serializable
 data class EditGyro(
     val mode: GyroEditMode = GyroEditMode.MOUSE,
     val sensitivityPct: Int = 100,
-    /** GyroGate name (ALWAYS / LEFT_GRIP / RIGHT_GRIP / EITHER_GRIP). */
+    /** GyroGate name (ALWAYS / LEFT_GRIP / RIGHT_GRIP / EITHER_GRIP / LEFT_PAD_TOUCH / RIGHT_PAD_TOUCH). */
     val gate: String = "EITHER_GRIP",
+    /** For JOYSTICK: which output stick (LEFT/RIGHT). */
+    val outputStick: String = "RIGHT",
 ) {
+    private fun gateEnum() = runCatching { GyroGate.valueOf(gate) }.getOrDefault(GyroGate.EITHER_GRIP)
     fun toRuntime(): GyroMode = when (mode) {
         GyroEditMode.OFF -> GyroMode.None
-        GyroEditMode.MOUSE -> GyroMode.Mouse(
-            sensitivity = DEFAULT_GYRO_SENS * sensitivityPct / 100f,
-            gate = runCatching { GyroGate.valueOf(gate) }.getOrDefault(GyroGate.EITHER_GRIP),
+        GyroEditMode.MOUSE -> GyroMode.Mouse(sensitivity = DEFAULT_GYRO_SENS * sensitivityPct / 100f, gate = gateEnum())
+        GyroEditMode.JOYSTICK -> GyroMode.Joystick(
+            stick = runCatching { Stick.valueOf(outputStick) }.getOrDefault(Stick.RIGHT),
+            sensitivity = DEFAULT_GYRO_JOY_SENS * sensitivityPct / 100f, gate = gateEnum(),
         )
     }
 
     companion object {
         const val DEFAULT_GYRO_SENS = 1f / 900f
+        const val DEFAULT_GYRO_JOY_SENS = 1f / 6000f // gyro rate → stick deflection
         fun from(m: GyroMode): EditGyro = when (m) {
+            is GyroMode.Joystick -> EditGyro(GyroEditMode.JOYSTICK, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_JOY_SENS * 100f).roundToInt(), gate = m.gate.name, outputStick = m.stick.name)
             is GyroMode.None -> EditGyro(GyroEditMode.OFF)
             is GyroMode.Mouse -> EditGyro(GyroEditMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_SENS * 100f).roundToInt(), gate = m.gate.name)
         }
