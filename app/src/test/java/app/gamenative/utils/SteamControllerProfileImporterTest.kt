@@ -1,6 +1,7 @@
 package app.gamenative.utils
 
 import app.gamenative.steamcontroller.Activator
+import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
 import app.gamenative.steamcontroller.PadMode
 import app.gamenative.steamcontroller.ScOutput
@@ -33,6 +34,22 @@ class SteamControllerProfileImporterTest {
             ?: error("missing test resource sc/$name")
 
     private fun gamepadBtn(idx: Byte) = ScOutput.GamepadButton(idx.toInt())
+
+    @Test
+    fun `hand-authored DOOM test config imports to the intended modes`() {
+        val cfg = SteamControllerProfileImporter.importConfig(load("doom_sc_test.vdf"))
+        val p = cfg.defaultProfile()
+        assertTrue("left stick = joystick", p.leftStick is StickMode.JoystickMove)
+        assertTrue("right stick = joystick", p.rightStick is StickMode.JoystickMove)
+        assertTrue("left pad = directional swipe", p.leftPad is PadMode.DirectionalSwipe)
+        assertTrue("right pad = relative mouse", p.rightPad is PadMode.Mouse)
+        assertTrue("gyro = joystick (camera)", p.gyro is GyroMode.Joystick)
+        assertEquals(TriggerAxis.GAMEPAD_R2, (p.rightTrigger as TriggerMode.Axis).axis)
+        assertEquals(gamepadBtn(ExternalController.IDX_BUTTON_A), p.buttons[TritonProtocol.BTN_A]?.output)
+        assertEquals(gamepadBtn(ExternalController.IDX_BUTTON_L1), p.buttons[TritonProtocol.BTN_LBUMPER]?.output)
+        // swipe up = mouse-wheel weapon cycle
+        assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_SCROLL_UP), (p.leftPad as PadMode.DirectionalSwipe).up)
+    }
     private fun key(k: XKeycode) = ScOutput.Key(listOf(k))
 
     // ---- v2 schema: gamepad_joystick.vdf (flat bindings + switch_bindings, xinput outputs) ----------
