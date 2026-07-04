@@ -62,7 +62,17 @@ fun ScConfigManagerDialog(storeKey: String, onChanged: () -> Unit, onDismiss: ()
             if (text.isNullOrBlank()) { SnackbarManager.show("Could not read the selected file"); return@launch }
             val parsed = withContext(Dispatchers.IO) { ScConfigStore.validate(text) }
             if (parsed == null) { SnackbarManager.show("Not a valid Steam Controller .vdf config"); return@launch }
-            val newId = withContext(Dispatchers.IO) { ScConfigStore.importVdfConfig(context, storeKey, text) }
+            // Name the config from the vdf's top-level `title` (e.g. "testGyroect123"), falling back to the file name,
+            // then a generic label — instead of the old "Imported (.vdf)" (which doubled the "(.vdf)" list suffix).
+            val title = Regex("\"title\"\\s+\"([^\"#][^\"]*)\"").find(text)?.groupValues?.getOrNull(1)?.trim()
+            val fileName = runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (i >= 0 && c.moveToFirst()) c.getString(i)?.substringBeforeLast('.') else null
+                }
+            }.getOrNull()
+            val name = title?.takeIf { it.isNotBlank() } ?: fileName?.takeIf { it.isNotBlank() } ?: "Imported"
+            val newId = withContext(Dispatchers.IO) { ScConfigStore.importVdfConfig(context, storeKey, text, name) }
             version++; onChanged()
             SnackbarManager.show(
                 if (newId != null) "Imported ${parsed.sets.size} action set(s) — now active" else "Could not save the imported config",

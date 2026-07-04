@@ -91,7 +91,7 @@ object ScConfigStore {
             val id = "vdf"
             runCatching { f.copyTo(vdfPayload(context, key, id), overwrite = true); f.delete() }
                 .onFailure { Log.w(TAG, "migrate vdf($key) failed: ${it.message}") }
-            entries += ScConfigEntry(id, "Imported (.vdf)", ScConfigKind.VDF)
+            entries += ScConfigEntry(id, "Imported", ScConfigKind.VDF)
             active = id
         }
         // Authored: prefer the multi-set `.sets.json`, else convert a legacy single `.json`.
@@ -182,7 +182,7 @@ object ScConfigStore {
     }
 
     /** Import raw `.vdf` [text] for [key] as a new VDF config named [name], made active. Returns the new id, or null. */
-    fun importVdfConfig(context: Context, key: String, text: String, name: String = "Imported (.vdf)"): String? {
+    fun importVdfConfig(context: Context, key: String, text: String, name: String = "Imported"): String? {
         val reg = registry(context, key)
         val newId = reg.nextId()
         if (!runCatching { vdfPayload(context, key, newId).writeText(text); true }.getOrDefault(false)) {
