@@ -5,6 +5,7 @@ import app.gamenative.steamcontroller.Binding
 import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
+import app.gamenative.steamcontroller.MacroCommand
 import app.gamenative.steamcontroller.MenuSlot
 import app.gamenative.steamcontroller.PadMode
 import app.gamenative.steamcontroller.ScConfig
@@ -574,12 +575,11 @@ object SteamControllerProfileImporter {
                 up = dirOut(group, "dpad_north"), down = dirOut(group, "dpad_south"),
                 left = dirOut(group, "dpad_west"), right = dirOut(group, "dpad_east"),
             )
-            // Pad-as-joystick: absolute finger position drives a virtual XInput stick (recenters on lift). A trackpad
-            // usually emulates the RIGHT (camera) stick — the physical stick covers movement — so default RIGHT;
-            // Steam's `output_joystick "0"` forces LEFT. ponytail: value→stick is a heuristic from the stock
-            // templates (physical left stick omits output_joystick; camera trackpads set "1"); flip if a real export disproves it.
+            // Pad-as-joystick: absolute finger position drives a virtual XInput stick (recenters on lift). Steam's
+            // `output_joystick` = 1/2/3 = Left/Right/mouse (confirmed key). Absent → default RIGHT (camera): a trackpad
+            // usually augments look, the physical stick covers movement. ponytail: absent-default is a heuristic; validate.
             "joystick_move" -> PadMode.Joystick(
-                stick = if (s?.getString("output_joystick") == "0") Stick.LEFT else Stick.RIGHT,
+                stick = if (s?.getString("output_joystick") == "1") Stick.LEFT else Stick.RIGHT,
                 invertY = readInvertY(s, default = true),
                 deadzone = readDeadzone(s, default = 0.12f),
             )
@@ -740,25 +740,44 @@ object SteamControllerProfileImporter {
 
     // ---- input / binding / activator parsing --------------------------------------------------------
 
-    /** Resolve a v3 input object (its activators) to a single [Binding], picking the best-priority bound activator. */
+    /** Resolve a v3 input object (its activators) to a single [Binding]. Repeated same-type activator blocks form a
+     *  **macro** (each block = one command, played in sequence); otherwise the best-priority bound activator wins. */
     private fun resolveInput(inputObj: VdfObject): Binding? {
         val activators = inputObj.getObject("activators") ?: return null
-        // (priority, activator, output, rawActivatorType)
-        var best: Quad? = null
-        for ((type, actObj) in activators.objectEntries()) {
-            val bindingStrings = actObj.getObject("bindings")?.getStrings("binding") ?: continue
-            val out = parseActivatorOutput(bindingStrings) ?: continue
-            val act = activatorOf(type, actObj.getObject("settings"))
-            val prio = activatorPriority(type)
-            if (best == null || prio < best!!.prio) best = Quad(prio, act, out, type.lowercase())
+        val blocks = activators.objectEntries() // (type, actObj), in order, duplicates preserved
+        if (blocks.isEmpty()) return null
+        // Winning activator type = best priority present (Full_Press beats Long_Press, etc.).
+        val winningType = blocks.map { it.first.lowercase() }.minByOrNull { activatorPriority(it) } ?: return null
+        val winning = blocks.filter { it.first.equals(winningType, ignoreCase = true) }.map { it.second }
+        // Macro: two-or-more blocks of the winning type = a command sequence (within a command, bindings are a chord).
+        if (winning.size >= 2) {
+            val commands = winning.mapNotNull { macroCommandOf(it) }
+            if (commands.size >= 2) return Binding(ScOutput.Macro(commands))
         }
-        val b = best ?: return null
+        val actObj = winning.first()
+        val bindingStrings = actObj.getObject("bindings")?.getStrings("binding") ?: return null
+        val out0 = parseActivatorOutput(bindingStrings) ?: return null
+        val settings = actObj.getObject("settings")
         // An action-set switch fires on its activator's edge: a `release` activator => switch on release.
-        val out = if (b.output is ScOutput.SwitchActionSet && b.type == "release") {
-            (b.output as ScOutput.SwitchActionSet).copy(onRelease = true)
-        } else b.output
-        return Binding(out, b.activator)
+        val out = if (out0 is ScOutput.SwitchActionSet && winningType == "release") out0.copy(onRelease = true) else out0
+        return Binding(
+            out, activatorOf(winningType, settings),
+            delayStartMs = readDelayMs(settings, "delay_start"), delayEndMs = readDelayMs(settings, "delay_end"),
+            toggle = settings?.getString("toggle") == "1",
+        )
     }
+
+    /** One macro command: its bindings parsed as individual outputs (pressed together), plus its per-command delays. */
+    private fun macroCommandOf(actObj: VdfObject): MacroCommand? {
+        val outs = actObj.getObject("bindings")?.getStrings("binding")?.mapNotNull { parseBindingOutput(it) }
+            ?.filter { it != ScOutput.None } ?: return null
+        if (outs.isEmpty()) return null
+        val s = actObj.getObject("settings")
+        return MacroCommand(outs, readDelayMs(s, "delay_start"), readDelayMs(s, "delay_end"))
+    }
+
+    private fun readDelayMs(settings: VdfObject?, key: String): Long =
+        settings?.getString(key)?.toLongOrNull()?.coerceIn(0, 5000) ?: 0L
 
     private class Quad(val prio: Int, val activator: Activator, val output: ScOutput, val type: String)
 

@@ -128,6 +128,7 @@ data class EditBinding(
 fun ScOutput.advancedDesc(): String? = when (this) {
     is ScOutput.ModeShift -> "Mode-shift $source"
     is ScOutput.MousePosition -> "Mouse position"
+    is ScOutput.Macro -> "Macro (${commands.size} cmd${if (commands.size == 1) "" else "s"})"
     else -> null
 }
 

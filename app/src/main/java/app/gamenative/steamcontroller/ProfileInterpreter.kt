@@ -111,6 +111,11 @@ class ProfileInterpreter(
         /** Held-d-pad menu nav auto-repeat: initial delay, then per-step interval (ms). */
         const val NAV_REPEAT_DELAY_MS = 400L
         const val NAV_REPEAT_INTERVAL_MS = 130L
+        /** Macro step timing (ms): how long each command holds, and the gap after it, so the game samples distinct
+         *  presses. Tunable by feel on device. [MIN_PULSE_MS] guards a delayed press+release so it still registers. */
+        const val MACRO_STEP_MS = 40L
+        const val MACRO_GAP_MS = 40L
+        const val MIN_PULSE_MS = 20L
         /** 8-way arrow labels for a directional (movement) radial, clockwise from top — matches the ring order. */
         val ARROW8 = listOf("↑", "↗", "→", "↘", "↓", "↙", "←", "↖")
         /** Bare XKeycode name (minus "KEY_") → its glyph, for compact overlay slot labels. */
@@ -124,6 +129,53 @@ class ProfileInterpreter(
     private fun hideMenu() { runCatching { menuOverlay.hideMenu() } }
     private val gp = GamepadState()
     private var prevButtons = 0
+
+    // ---- timed scheduler (per-binding delays + macro playback) ----
+    // A queue of press/release ops due at an absolute clock time. Drained each frame. Keys/mouse go straight to the
+    // sink; gamepad outputs held by a running macro are collected in [macroBtns]/[macroDpad] and OR'd into gp.
+    private class Scheduled(val dueMs: Long, val out: ScOutput, val press: Boolean)
+    private val scheduled = ArrayList<Scheduled>()
+    private var macroBtns = 0
+    private val macroDpad = BooleanArray(4)
+
+    private fun drainScheduled(now: Long) {
+        if (scheduled.isNotEmpty()) {
+            val fire = ArrayList<Scheduled>()
+            val it = scheduled.iterator()
+            while (it.hasNext()) { val s = it.next(); if (s.dueMs <= now) { fire.add(s); it.remove() } }
+            fire.sortBy { it.dueMs }
+            for (s in fire) when (val o = s.out) {
+                is ScOutput.GamepadButton -> macroBtns = if (s.press) macroBtns or (1 shl o.idx) else macroBtns and (1 shl o.idx).inv()
+                is ScOutput.GamepadDpad -> macroDpad[o.index] = s.press
+                else -> if (s.press) pressOutput(o) else releaseOutput(o)
+            }
+        }
+        // Overlay any macro-held gamepad bits onto this frame's virtual pad (after the level buttons were rebuilt).
+        for (i in 0..15) if (macroBtns and (1 shl i) != 0) gp.setPressed(i, true)
+        for (i in 0..3) if (macroDpad[i]) gp.dpad[i] = true
+    }
+
+    /** Press/release an edge output at an absolute time (immediate if already due). */
+    private fun schedule(out: ScOutput, atMs: Long, press: Boolean, now: Long) {
+        if (atMs <= now) { if (press) pressOutput(out) else releaseOutput(out) } else scheduled.add(Scheduled(atMs, out, press))
+    }
+
+    /** Enqueue a macro (one-shot): each command's outputs are pressed together, held [MACRO_STEP_MS], then released;
+     *  commands run in order, framed by their delay_start/delay_end (+ a small gap so steps read as distinct presses). */
+    private fun playMacro(m: ScOutput.Macro, now: Long) {
+        var t = now
+        for (cmd in m.commands) {
+            t += cmd.delayStartMs
+            for (o in cmd.outputs) scheduled.add(Scheduled(t, o, true))
+            val rel = t + MACRO_STEP_MS
+            for (o in cmd.outputs) scheduled.add(Scheduled(rel, o, false))
+            t = rel + cmd.delayEndMs + MACRO_GAP_MS
+        }
+    }
+
+    private fun clearScheduled() {
+        scheduled.clear(); macroBtns = 0; for (i in 0..3) macroDpad[i] = false
+    }
 
     /** Optional multi-set config. When installed, [ScOutput.SwitchActionSet] bindings swap [profile] live. */
     @Volatile var config: ScConfig? = null
@@ -233,7 +285,11 @@ class ProfileInterpreter(
         handleLayerOps(s)         // may push/pop action layers; both rebuild the effective `profile`
         val p = profile
 
-        // ---- level outputs: virtual-pad buttons + d-pad (set every frame from current state) ----
+        // ---- level outputs: virtual-pad buttons + d-pad (rebuilt every frame from current state) ----
+        // Reset first so any macro-held gamepad bit (overlaid later in drainScheduled) clears once its macro ends,
+        // rather than sticking (non-mapped bits are never otherwise cleared).
+        gp.buttons = 0
+        for (i in 0..3) gp.dpad[i] = false
         for ((bit, b) in p.buttons) {
             when (val out = b.output) {
                 is ScOutput.GamepadButton -> gp.setPressed(out.idx, s.has(bit))
@@ -252,7 +308,9 @@ class ProfileInterpreter(
         val now = clock()
         for ((bit, b) in p.buttons) {
             when (b.output) {
-                is ScOutput.MouseButton, is ScOutput.Key, is ScOutput.MouseNudge, is ScOutput.MousePosition -> applyActivator(bit, b, s, now)
+                // Edge outputs route through activators. (Per-binding delay/toggle on a gamepad LEVEL button is a
+                // separate code path, deferred to a later wave — see the buttons loop above.)
+                is ScOutput.MouseButton, is ScOutput.Key, is ScOutput.MouseNudge, is ScOutput.MousePosition, is ScOutput.Macro -> applyActivator(bit, b, s, now)
                 else -> {}
             }
         }
@@ -261,7 +319,10 @@ class ProfileInterpreter(
         applyPad(p.leftPad, leftPad, s, TritonProtocol.BTN_LPAD_TOUCH, TritonProtocol.BTN_LPAD_CLICK, s.leftPadX, s.leftPadY, ScMenuLocation.LEFT_PAD.name)
         applyPad(p.rightPad, rightPad, s, TritonProtocol.BTN_RPAD_TOUCH, TritonProtocol.BTN_RPAD_CLICK, s.rightPadX, s.rightPadY, ScMenuLocation.RIGHT_PAD.name)
 
-        // Push the virtual pad AFTER every gp contributor (buttons, sticks, triggers, gyro, pad-as-joystick).
+        // Fire any due scheduled ops (per-binding delays + macro steps) and overlay macro-held gamepad bits onto gp.
+        drainScheduled(now)
+
+        // Push the virtual pad AFTER every gp contributor (buttons, sticks, triggers, gyro, pad-as-joystick, macros).
         sink.gamepad(gp)
 
 
@@ -304,6 +365,7 @@ class ProfileInterpreter(
     /** Freeze the virtual pad at neutral (used when an overlay takes over the controller, so the game sees no
      *  stuck input while the keyboard / QuickMenu is up). */
     private fun neutralizeGamepad() {
+        clearScheduled() // drop any in-flight macro / delayed press so nothing stays stuck while an overlay is up
         gp.thumbLX = 0f; gp.thumbLY = 0f; gp.thumbRX = 0f; gp.thumbRY = 0f
         gp.triggerL = 0f; gp.triggerR = 0f; gp.buttons = 0
         for (i in 0..3) gp.dpad[i] = false
@@ -486,6 +548,8 @@ class ProfileInterpreter(
         var fired = false        // LongPress: threshold reached and output held
         var lastFire = 0L        // Turbo: time of the last pulse
         var held = false         // Regular/LongPress: output currently held down
+        var toggled = false      // Toggle: output currently latched on
+        var pressDueMs = 0L      // Regular+delay: when the deferred press is/was due (so a delayed release stays after it)
     }
     private val actStates = HashMap<Int, ActState>()
 
@@ -496,10 +560,21 @@ class ProfileInterpreter(
         val rose = rising(s, bit)
         val fell = falling(s, bit)
         val st = actStates.getOrPut(bit) { ActState() }
+        // Macro: play the whole sequence once on the press edge (one-shot; hold/release don't affect it).
+        if (out is ScOutput.Macro) { if (rose) playMacro(out, now); return }
+        // Toggle: the press edge latches the output on, the next press latches it off (delays apply to each edge).
+        if (b.toggle) {
+            if (rose) { st.toggled = !st.toggled; schedule(out, now + (if (st.toggled) b.delayStartMs else b.delayEndMs), st.toggled, now) }
+            return
+        }
         when (val act = b.activator) {
             Activator.Regular -> {
-                if (rose) { pressOutput(out); st.held = true }
-                if (fell) { releaseOutput(out); st.held = false }
+                // Fire Start/End Delay: defer the press/release. "Fire anyway" — a press scheduled on the rise happens
+                // even if released during the delay; the release is clamped to stay after the press so a tap registers.
+                // With no delay set, both fire immediately (identical to the pre-delay path).
+                val delayed = b.delayStartMs > 0 || b.delayEndMs > 0
+                if (rose) { st.pressDueMs = now + b.delayStartMs; schedule(out, st.pressDueMs, true, now); st.held = true }
+                if (fell) { schedule(out, if (delayed) maxOf(now + b.delayEndMs, st.pressDueMs + MIN_PULSE_MS) else now, false, now); st.held = false }
             }
             is Activator.DoublePress -> {
                 if (rose) {

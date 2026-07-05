@@ -70,7 +70,17 @@ sealed class ScOutput {
      *  on the press edge emits [ScOutputSink.mouseMoveAbs] to ([nx],[ny]) (screen fraction 0..1). ([returnAfter]
      *  auto-return-after is not yet honored — needs the sink to read the current position first.) */
     data class MousePosition(val nx: Float, val ny: Float, val returnAfter: Boolean = false) : ScOutput()
+    /**
+     * A macro (Steam's repeated same-type activators): a sequence of [commands] played **once on press**
+     * (one-shot; holding doesn't repeat, releasing doesn't interrupt). Commands run in order, each framed by its
+     * own `delay_start`/`delay_end`; a command's [MacroCommand.outputs] are pressed **together** (a chord) for the
+     * step. Sub-outputs may be keys/mouse/gamepad. Played by [ProfileInterpreter] via its timed scheduler.
+     */
+    data class Macro(val commands: List<MacroCommand>) : ScOutput()
 }
+
+/** One step of an [ScOutput.Macro]: [outputs] are held together for the step, framed by the per-command delays (ms). */
+data class MacroCommand(val outputs: List<ScOutput>, val delayStartMs: Long = 0, val delayEndMs: Long = 0)
 
 enum class LayerOpType { ADD, HOLD, REMOVE }
 
@@ -132,8 +142,19 @@ sealed class Activator {
     object OnRelease : Activator()
 }
 
-/** A digital binding: an [output] plus the [activator] press-logic that drives it. */
-data class Binding(val output: ScOutput, val activator: Activator = Activator.Regular)
+/**
+ * A digital binding: an [output] plus the [activator] press-logic that drives it. Steam per-binding settings
+ * (edge outputs only, for now): [delayStartMs]/[delayEndMs] = Fire Start/End Delay (ms; the output press/release
+ * is deferred, and "fires anyway" even if the button is released during the start delay); [toggle] = the press
+ * latches the output on, the next press latches it off.
+ */
+data class Binding(
+    val output: ScOutput,
+    val activator: Activator = Activator.Regular,
+    val delayStartMs: Long = 0,
+    val delayEndMs: Long = 0,
+    val toggle: Boolean = false,
+)
 
 /** Which XInput trigger axis a physical SC trigger's analog value drives. */
 enum class TriggerAxis { NONE, GAMEPAD_L2, GAMEPAD_R2 }

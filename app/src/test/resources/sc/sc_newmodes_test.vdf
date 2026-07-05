@@ -33,7 +33,7 @@
 		"id"		"2"
 		"mode"		"joystick_move"
 		"inputs" {}
-		"settings" { "output_joystick" "1" }
+		"settings" { "output_joystick" "2" }
 	}
 	"group"
 	{

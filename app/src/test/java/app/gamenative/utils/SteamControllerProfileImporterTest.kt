@@ -93,7 +93,45 @@ class SteamControllerProfileImporterTest {
         val p = SteamControllerProfileImporter.importConfig(load("sc_newmodes_test.vdf")).defaultProfile()
         val d = p.leftStick as StickMode.DPad          // stick-as-dpad -> WASD
         assertEquals(key(XKeycode.KEY_W), d.up); assertEquals(key(XKeycode.KEY_D), d.right)
-        assertEquals(PadMode.Joystick(Stick.RIGHT), p.leftPad)   // pad-as-joystick, output_joystick "1" -> RIGHT
+        assertEquals(PadMode.Joystick(Stick.RIGHT), p.leftPad)   // pad-as-joystick, output_joystick "2" -> RIGHT
+    }
+
+    @Test
+    fun `macros and per-binding delay-toggle decode`() {
+        val vdf = """
+            "controller_mappings" {
+              "version" "3"
+              "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "four_buttons"
+                "inputs" {
+                  "button_a" { "activators" {
+                    "Full_Press" { "bindings" { "binding" "key_press 1" } }
+                    "Full_Press" { "bindings" { "binding" "key_press 2" } "settings" { "delay_start" "50" } }
+                  } }
+                  "button_b" { "activators" {
+                    "Full_Press" { "bindings" { "binding" "key_press F" } "settings" { "delay_start" "76" "delay_end" "308" "toggle" "1" } }
+                  } }
+                  "button_x" { "activators" {
+                    "Full_Press" { "bindings" { "binding" "key_press LEFT_SHIFT"  "binding" "key_press TAB" } }
+                  } }
+                }
+              }
+              "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "button_diamond active" } }
+            }
+        """.trimIndent()
+        val p = SteamControllerProfileImporter.importConfig(vdf).defaultProfile()
+        // Repeated Full_Press blocks -> a 2-command macro; per-command delay is carried
+        val macro = p.buttons[TritonProtocol.BTN_A]!!.output as ScOutput.Macro
+        assertEquals(2, macro.commands.size)
+        assertEquals(key(XKeycode.KEY_1), macro.commands[0].outputs.single())
+        assertEquals(key(XKeycode.KEY_2), macro.commands[1].outputs.single())
+        assertEquals(50L, macro.commands[1].delayStartMs)
+        // Per-binding delay + toggle on a single binding
+        val bb = p.buttons[TritonProtocol.BTN_B]!!
+        assertEquals(76L, bb.delayStartMs); assertEquals(308L, bb.delayEndMs); assertTrue(bb.toggle)
+        // A single command with two keys stays a HELD COMBO (not a macro) -> preserves Alt+Tab-style combos
+        val combo = p.buttons[TritonProtocol.BTN_X]!!.output as ScOutput.Key
+        assertEquals(2, combo.keys.size)
     }
 
     private fun key(k: XKeycode) = ScOutput.Key(listOf(k))
