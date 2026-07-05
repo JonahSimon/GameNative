@@ -563,6 +563,7 @@ class ProfileInterpreter(
                 val dx = (x * mode.sensitivity).toInt()
                 if (dx != 0) sink.mouseMove(dx, 0)
             }
+            is StickMode.DPad -> applyStickDpad(mode, rawX, rawY, menuRt)
             StickMode.None -> {}
         }
     }
@@ -629,7 +630,7 @@ class ProfileInterpreter(
     }
 
     // ---- shared Radial/Touch menu engine (pad- or stick-driven) ----
-    private class MenuRuntime { var slot = -1; var active = false; var shown = false; var heldSlot = -1; var lastFire = 0L; var committed = false }
+    private class MenuRuntime { var slot = -1; var active = false; var shown = false; var heldSlot = -1; var lastFire = 0L; var committed = false; var dpadMask = 0 }
 
     /**
      * Drive a Radial/Touch menu from any 2D source. [active] = the source is engaged (pad touched / stick deflected
@@ -740,28 +741,35 @@ class ProfileInterpreter(
         if (b.activator !is Activator.Turbo) releaseOutput(b.output)
     }
 
-    /** 8-way d-pad: bit0=up, bit1=down, bit2=left, bit3=right. Edge-press the outputs as the mask changes. */
-    private fun applyPadDpad(mode: PadMode.DPad, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {
-        val mask = if (!touched) 0 else {
-            val cx = x / 32768f
-            val cy = y / 32768f // pad +Y is up
+    /** 8-way d-pad: bit0=up, bit1=down, bit2=left, bit3=right. Edge-press [outs] as the mask changes; returns the new
+     *  mask (store it back). [cx]/[cy] = normalized deflection (+Y up); [active]=false forces neutral (e.g. pad lifted). */
+    private fun driveDpad(cx: Float, cy: Float, active: Boolean, deadzone: Float, outs: Array<ScOutput>, prevMask: Int): Int {
+        val mask = if (!active) 0 else {
             var m = 0
-            if (cy > mode.deadzone) m = m or 0x1
-            if (cy < -mode.deadzone) m = m or 0x2
-            if (cx < -mode.deadzone) m = m or 0x4
-            if (cx > mode.deadzone) m = m or 0x8
+            if (cy > deadzone) m = m or 0x1
+            if (cy < -deadzone) m = m or 0x2
+            if (cx < -deadzone) m = m or 0x4
+            if (cx > deadzone) m = m or 0x8
             m
         }
-        if (mask == rt.dpadMask) return
-        val outs = arrayOf(mode.up, mode.down, mode.left, mode.right)
+        if (mask == prevMask) return mask
         for (i in 0..3) {
             val bit = 1 shl i
-            val was = rt.dpadMask and bit != 0
-            val now = mask and bit != 0
-            if (now && !was) pressOutput(outs[i])
-            if (!now && was) releaseOutput(outs[i])
+            if (mask and bit != 0 && prevMask and bit == 0) pressOutput(outs[i])
+            if (mask and bit == 0 && prevMask and bit != 0) releaseOutput(outs[i])
         }
-        rt.dpadMask = mask
+        return mask
+    }
+
+    private fun applyPadDpad(mode: PadMode.DPad, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {
+        rt.dpadMask = driveDpad(x / 32768f, y / 32768f, touched, mode.deadzone,
+            arrayOf(mode.up, mode.down, mode.left, mode.right), rt.dpadMask)
+    }
+
+    /** Stick as an 8-way d-pad: always live (deflection past the deadzone presses a direction; recenters to neutral). */
+    private fun applyStickDpad(mode: StickMode.DPad, rawX: Int, rawY: Int, rt: MenuRuntime) {
+        rt.dpadMask = driveDpad(rawX / 32768f, rawY / 32768f, active = true, mode.deadzone,
+            arrayOf(mode.up, mode.down, mode.left, mode.right), rt.dpadMask)
     }
 
     /** Scroll wheel: accumulate vertical travel; each [step] units emits one wheel click. */

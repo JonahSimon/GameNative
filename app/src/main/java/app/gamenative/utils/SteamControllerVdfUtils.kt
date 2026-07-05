@@ -523,6 +523,11 @@ object SteamControllerProfileImporter {
                 deadzone = readDeadzone(s, default = 0.10f),
             )
             "flickstick" -> StickMode.FlickStick(deadzone = readDeadzone(s, default = 0.20f))
+            "dpad" -> StickMode.DPad(
+                up = dirOut(group, "dpad_north"), down = dirOut(group, "dpad_south"),
+                left = dirOut(group, "dpad_west"), right = dirOut(group, "dpad_east"),
+                deadzone = readDeadzone(s, default = 0.35f),
+            ).takeIf { listOf(it.up, it.down, it.left, it.right).any { o -> o != ScOutput.None } } ?: StickMode.None
             "radial_menu" -> parseRadial(group).let {
                 if (it.ring.isEmpty()) StickMode.None // HOLD by default (movement radial)
                 else StickMode.RadialMenu(it.ring, center = it.center, directional = it.directional)

@@ -191,6 +191,12 @@ sealed class StickMode {
     ) : StickMode()
     /** Touch/grid menu driven by the stick: deflection picks a grid cell. [activation]/[deadzone] as [RadialMenu]. */
     data class TouchMenu(val slots: List<MenuSlot>, val cols: Int, val rows: Int, val activation: MenuActivation = MenuActivation.HOLD, val deadzone: Float = 0.35f) : StickMode()
+    /** Stick as an 8-way d-pad (Steam stick `dpad`): deflection past [deadzone] presses the matching edge output(s)
+     *  (diagonals press two); recenters to neutral. Same 8-way logic as [PadMode.DPad] but always live (no touch gate). */
+    data class DPad(
+        val up: ScOutput, val down: ScOutput, val left: ScOutput, val right: ScOutput,
+        val deadzone: Float = 0.35f,
+    ) : StickMode()
 }
 
 /**

@@ -63,6 +63,31 @@ class SteamControllerProfileImporterTest {
         assertTrue(rp.invertX && rp.invertY)
     }
 
+    @Test
+    fun `stick dpad mode decodes to StickMode DPad`() {
+        val vdf = """
+            "controller_mappings" {
+              "version" "3"
+              "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "dpad"
+                "inputs" {
+                  "dpad_north" { "activators" { "Full_Press" { "bindings" { "binding" "key_press W" } } } }
+                  "dpad_south" { "activators" { "Full_Press" { "bindings" { "binding" "key_press S" } } } }
+                  "dpad_west" { "activators" { "Full_Press" { "bindings" { "binding" "key_press A" } } } }
+                  "dpad_east" { "activators" { "Full_Press" { "bindings" { "binding" "key_press D" } } } }
+                }
+              }
+              "preset" { "id" "0" "name" "Default"
+                "group_source_bindings" { "0" "joystick active" }
+              }
+            }
+        """.trimIndent()
+        val d = SteamControllerProfileImporter.importConfig(vdf).defaultProfile().leftStick as StickMode.DPad
+        assertEquals(ScOutput.Key(listOf(XKeycode.KEY_W)), d.up)
+        assertEquals(ScOutput.Key(listOf(XKeycode.KEY_A)), d.left)
+        assertEquals(ScOutput.Key(listOf(XKeycode.KEY_D)), d.right)
+    }
+
     private fun key(k: XKeycode) = ScOutput.Key(listOf(k))
 
     // ---- v2 schema: gamepad_joystick.vdf (flat bindings + switch_bindings, xinput outputs) ----------
@@ -140,8 +165,10 @@ class SteamControllerProfileImporterTest {
         assertEquals(key(XKeycode.KEY_2), b[TritonProtocol.BTN_DPAD_RIGHT]?.output)
         assertEquals(key(XKeycode.KEY_4), b[TritonProtocol.BTN_DPAD_LEFT]?.output)
 
-        // joystick source is a WASD d-pad group: stick-as-dpad is unsupported (None), but its click is kept
-        assertEquals(StickMode.None, p.leftStick)
+        // joystick source is a WASD d-pad group -> stick-as-dpad (was dropped to None before); its click is kept
+        val ld = p.leftStick as StickMode.DPad
+        assertEquals(key(XKeycode.KEY_W), ld.up); assertEquals(key(XKeycode.KEY_S), ld.down)
+        assertEquals(key(XKeycode.KEY_A), ld.left); assertEquals(key(XKeycode.KEY_D), ld.right)
         assertEquals(key(XKeycode.KEY_SHIFT_L), b[TritonProtocol.BTN_L3]?.output)
 
         // right_joystick = joystick_mouse -> StickMode.Mouse (stick drives the pointer), click -> left mouse
@@ -192,7 +219,8 @@ class SteamControllerProfileImporterTest {
         assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_RIGHT), (p.leftTrigger as TriggerMode.Staged).full)
         assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_LEFT), (p.rightTrigger as TriggerMode.Staged).full)
 
-        // joystick = dpad-on-stick (unsupported -> None); right_joystick = joystick_mouse -> StickMode.Mouse
+        // joystick = dpad-on-stick but all directions are skipped controller_actions -> empty dpad collapses to None;
+        // right_joystick = joystick_mouse -> StickMode.Mouse
         assertEquals(StickMode.None, p.leftStick)
         assertTrue(p.rightStick is StickMode.Mouse)
     }
@@ -233,8 +261,10 @@ class SteamControllerProfileImporterTest {
         assertEquals(key(XKeycode.KEY_1), leftMenu.slots.first().binding.output)
         //  - left stick -> reference -> radial_menu ("Movement (Radial)") -> StickMode.RadialMenu (HOLD default).
         assertTrue(p.leftStick is StickMode.RadialMenu)
-        //  - right stick -> dpad-mode group (stick-as-dpad unsupported)
-        assertEquals(StickMode.None, p.rightStick)
+        //  - right stick -> dpad-mode group -> stick-as-dpad (was dropped to None before); up/down = mouse-wheel scroll
+        val rd = p.rightStick as StickMode.DPad
+        assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_SCROLL_UP), rd.up)
+        assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_SCROLL_DOWN), rd.down)
     }
 
     // ---- importing ALL action sets (foundation for runtime set-switching, step 3) -------------------------

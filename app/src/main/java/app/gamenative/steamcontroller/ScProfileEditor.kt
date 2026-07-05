@@ -338,6 +338,8 @@ data class EditAnalog(
                 menuCols = m.cols, menuRows = m.rows, deadzonePct = (m.deadzone * 100f).roundToInt(),
                 menuHold = m.activation == MenuActivation.HOLD,
             )
+            // Stick d-pad isn't a stick option in the editor (DPAD is pad-only) -> null = inherit (preserved losslessly).
+            is StickMode.DPad -> null
         }
     }
 }

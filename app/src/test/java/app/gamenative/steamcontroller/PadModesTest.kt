@@ -60,6 +60,25 @@ class PadModesTest {
         assertEquals(0.25f, sink.lastAbsY, 0.01f)
     }
 
+    private fun leftStickState(x: Int, y: Int): TritonState =
+        TritonState().apply { leftStickX = x; leftStickY = y }
+
+    @Test
+    fun `stick d-pad presses a direction on deflect and releases on recenter`() {
+        val sink = RecordingSink()
+        val prof = ScProfile(leftStick = StickMode.DPad(
+            up = ScOutput.Key(XKeycode.KEY_W), down = ScOutput.Key(XKeycode.KEY_S),
+            left = ScOutput.Key(XKeycode.KEY_A), right = ScOutput.Key(XKeycode.KEY_D)))
+        val interp = ProfileInterpreter(sink, prof, haptics = null)
+        // Full up deflection (+Y is up) -> W pressed once.
+        interp.apply(leftStickState(0, 32767))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_W))
+        // Recenter -> W released, no other direction fired.
+        interp.apply(leftStickState(0, 0))
+        assertEquals(1, sink.keys.count { it.key == XKeycode.KEY_W && !it.pressed })
+        assertEquals(0, sink.keyPresses(XKeycode.KEY_A))
+    }
+
     @Test
     fun `pad-as-joystick deflects the chosen stick while touched and recenters on lift`() {
         val sink = RecordingSink()
