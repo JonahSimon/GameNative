@@ -252,6 +252,17 @@ sealed class PadMode {
     /** Finger slide → scroll wheel: every [step] pad-units of vertical travel emits one wheel click. */
     data class ScrollWheel(val step: Int = 6000, val invertY: Boolean = false) : PadMode()
     /**
+     * Trackpad as a virtual thumbstick (Steam pad `joystick_move`): the finger's absolute position on the pad =
+     * stick deflection while touched, recentering (zero) on lift. Reuses the stick joystick math ([deadzone]/
+     * [curve]/[invertY]); [stick] selects which XInput stick to drive.
+     */
+    data class Joystick(
+        val stick: Stick,
+        val invertY: Boolean = true,
+        val deadzone: Float = 0.12f,
+        val curve: ResponseCurve = ResponseCurve.LINEAR,
+    ) : PadMode()
+    /**
      * Radial Menu (Steam `radial_menu`): while the pad is touched, the finger **angle** highlights one of
      * [slots] arranged in a ring (slot 0 at top/12-o'clock, clockwise); committing fires that slot's binding as
      * a pulse. [onClick] = commit on pad click; else commit on touch-release ("point and release"). The visual

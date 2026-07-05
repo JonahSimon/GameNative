@@ -90,8 +90,9 @@ class SteamControllerProfileImporterTest {
         assertEquals(StickMode.JoystickMove(Stick.LEFT), p.leftStick)
         assertEquals(gamepadBtn(ExternalController.IDX_BUTTON_L3), b[TritonProtocol.BTN_L3]?.output)
 
-        // right_trackpad bound to a joystick_move group is unsupported as a pad mode -> None, but click -> R3
-        assertEquals(PadMode.None, p.rightPad)
+        // right_trackpad bound to a joystick_move group -> pad-as-joystick (drives a virtual stick); its click -> R3.
+        // No output_joystick set -> defaults to the RIGHT (camera) stick.
+        assertEquals(PadMode.Joystick(Stick.RIGHT), p.rightPad)
         assertEquals(gamepadBtn(ExternalController.IDX_BUTTON_R3), b[TritonProtocol.BTN_RPAD_CLICK]?.output)
 
         // analog triggers (click -> xinput TRIGGER_*) -> Axis, no digital click button

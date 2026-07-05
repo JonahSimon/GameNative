@@ -22,6 +22,8 @@ class RecordingSink : ScOutputSink {
     var maxThumbLX = 0f; var minThumbLX = 0f
     var maxThumbRX = 0f; var minThumbRX = 0f
     var maxTriggerL = 0f; var maxTriggerR = 0f
+    // Most-recent per-frame stick values (for tests that need the current deflection, e.g. recenter-on-lift).
+    var lastThumbLX = 0f; var lastThumbRX = 0f; var lastThumbRY = 0f
     var gamepadFrames = 0; private set
 
     var mouseDx = 0L; var mouseDy = 0L
@@ -40,6 +42,7 @@ class RecordingSink : ScOutputSink {
         for (i in 0..3) if (state.dpad[i]) dpadSeen[i] = true
         maxThumbLX = maxOf(maxThumbLX, state.thumbLX); minThumbLX = minOf(minThumbLX, state.thumbLX)
         maxThumbRX = maxOf(maxThumbRX, state.thumbRX); minThumbRX = minOf(minThumbRX, state.thumbRX)
+        lastThumbLX = state.thumbLX; lastThumbRX = state.thumbRX; lastThumbRY = state.thumbRY
         maxTriggerL = maxOf(maxTriggerL, state.triggerL); maxTriggerR = maxOf(maxTriggerR, state.triggerR)
     }
 

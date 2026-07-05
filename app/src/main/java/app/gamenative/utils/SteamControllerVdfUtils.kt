@@ -569,6 +569,15 @@ object SteamControllerProfileImporter {
                 up = dirOut(group, "dpad_north"), down = dirOut(group, "dpad_south"),
                 left = dirOut(group, "dpad_west"), right = dirOut(group, "dpad_east"),
             )
+            // Pad-as-joystick: absolute finger position drives a virtual XInput stick (recenters on lift). A trackpad
+            // usually emulates the RIGHT (camera) stick — the physical stick covers movement — so default RIGHT;
+            // Steam's `output_joystick "0"` forces LEFT. ponytail: value→stick is a heuristic from the stock
+            // templates (physical left stick omits output_joystick; camera trackpads set "1"); flip if a real export disproves it.
+            "joystick_move" -> PadMode.Joystick(
+                stick = if (s?.getString("output_joystick") == "0") Stick.LEFT else Stick.RIGHT,
+                invertY = readInvertY(s, default = true),
+                deadzone = readDeadzone(s, default = 0.12f),
+            )
             "mouse", "relative_mouse", "mouse_joystick" -> mouse()
             // Overlay-tier menus: the selection LOGIC is built (radial = angle→slot, touch = grid cell→slot,
             // commit pulses the slot). The visual ring/grid HUD is the step-6 overlay (separate). hotbar ≈ touch grid.

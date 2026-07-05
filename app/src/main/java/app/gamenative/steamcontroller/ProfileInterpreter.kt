@@ -245,10 +245,8 @@ class ProfileInterpreter(
         applyStick(p.rightStick, s.rightStickX, s.rightStickY, s.has(TritonProtocol.BTN_R3), s.has(TritonProtocol.BTN_RSTICK_TOUCH), rightStickMenu, ScMenuLocation.RIGHT_STICK.name)
         applyTrigger(p.leftTrigger, s.triggerLeft, leftTrig)
         applyTrigger(p.rightTrigger, s.triggerRight, rightTrig)
-        // Gyro before the pad push: a gyro-to-joystick mode adds to the stick, so it must land in this frame's gp.
+        // A gyro-to-joystick mode adds to the stick, so it must land in this frame's gp (before the push below).
         applyGyro(p.gyro, s)
-
-        sink.gamepad(gp)
 
         // ---- edge outputs (mouse buttons + keys) through their activators ----
         val now = clock()
@@ -259,9 +257,12 @@ class ProfileInterpreter(
             }
         }
 
-        // ---- trackpads (mode-driven: mouse / grid / d-pad / scroll) ----
+        // ---- trackpads (mode-driven: mouse / grid / d-pad / scroll / pad-as-joystick) ----
         applyPad(p.leftPad, leftPad, s, TritonProtocol.BTN_LPAD_TOUCH, TritonProtocol.BTN_LPAD_CLICK, s.leftPadX, s.leftPadY, ScMenuLocation.LEFT_PAD.name)
         applyPad(p.rightPad, rightPad, s, TritonProtocol.BTN_RPAD_TOUCH, TritonProtocol.BTN_RPAD_CLICK, s.rightPadX, s.rightPadY, ScMenuLocation.RIGHT_PAD.name)
+
+        // Push the virtual pad AFTER every gp contributor (buttons, sticks, triggers, gyro, pad-as-joystick).
+        sink.gamepad(gp)
 
 
         // ---- regenerate trackpad haptics (profile-driven feel) ----
@@ -613,6 +614,7 @@ class ProfileInterpreter(
             is PadMode.ButtonPadGrid -> applyPadGrid(mode, rt, s.has(if (mode.onClick) clickBit else touchBit), x, y)
             is PadMode.DPad -> applyPadDpad(mode, rt, s.has(touchBit), x, y)
             is PadMode.ScrollWheel -> applyPadScroll(mode, rt, s.has(touchBit), y)
+            is PadMode.Joystick -> applyPadJoystick(mode, s.has(touchBit), x, y)
             is PadMode.RadialMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, effectiveCommit(mode.onClick), rt.menu, center = mode.center, directional = mode.directional, menuId = menuId)
             is PadMode.TouchMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, effectiveCommit(mode.onClick), rt.menu, menuId = menuId)
         }
@@ -791,6 +793,14 @@ class ProfileInterpreter(
         val nx = mode.centerX + (fx - 0.5f) * mode.sizeX
         val ny = mode.centerY + (fyTop - 0.5f) * mode.sizeY
         sink.mouseMoveAbs(nx.coerceIn(0f, 1f), ny.coerceIn(0f, 1f))
+    }
+
+    /** Pad-as-joystick: the finger's absolute position = stick deflection while touched; recenters (zero) on lift.
+     *  Same curve/deadzone math as a physical stick ([applyStick]'s JoystickMove branch). */
+    private fun applyPadJoystick(mode: PadMode.Joystick, touched: Boolean, x: Int, y: Int) {
+        val vx = if (touched) axisCurved(x, mode.deadzone, mode.curve) else 0f
+        val vy = if (touched) axisCurved(if (mode.invertY) -y else y, mode.deadzone, mode.curve) else 0f
+        if (mode.stick == Stick.LEFT) { gp.thumbLX = vx; gp.thumbLY = vy } else { gp.thumbRX = vx; gp.thumbRY = vy }
     }
 
     /** Single-button pad: whole surface = one button, pressed while touched/clicked, released on lift. */

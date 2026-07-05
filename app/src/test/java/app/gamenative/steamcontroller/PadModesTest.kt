@@ -61,6 +61,19 @@ class PadModesTest {
     }
 
     @Test
+    fun `pad-as-joystick deflects the chosen stick while touched and recenters on lift`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.Joystick(Stick.RIGHT)), haptics = null)
+        // Finger full-right on the pad -> right stick deflects +X; the left stick is untouched.
+        interp.apply(leftPadState(touch = true, x = 32767, y = 0))
+        assertTrue("right stick pushed right", sink.lastThumbRX > 0.8f)
+        assertEquals("left stick untouched", 0f, sink.lastThumbLX, 1e-4f)
+        // Lift -> the stick recenters (no residual deflection, unlike a relative-mouse pad).
+        interp.apply(leftPadState(touch = false, x = 32767, y = 0))
+        assertEquals(0f, sink.lastThumbRX, 1e-4f)
+    }
+
+    @Test
     fun `single-button pad fires on touch and releases on lift`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.SingleButton(ScOutput.Key(XKeycode.KEY_SPACE))), haptics = null)
