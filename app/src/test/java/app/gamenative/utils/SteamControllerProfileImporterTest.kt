@@ -134,6 +134,15 @@ class SteamControllerProfileImporterTest {
         assertEquals(2, combo.keys.size)
     }
 
+    @Test
+    fun `bind-settings test config decodes macro delay and toggle`() {
+        val p = SteamControllerProfileImporter.importConfig(load("sc_bindsettings_test.vdf")).defaultProfile()
+        assertEquals(2, (p.buttons[TritonProtocol.BTN_A]!!.output as ScOutput.Macro).commands.size)
+        assertTrue(p.buttons[TritonProtocol.BTN_B]!!.toggle)
+        assertEquals(500L, p.buttons[TritonProtocol.BTN_X]!!.delayStartMs)
+        assertEquals(500L, p.buttons[TritonProtocol.BTN_Y]!!.delayEndMs)
+    }
+
     private fun key(k: XKeycode) = ScOutput.Key(listOf(k))
 
     // ---- v2 schema: gamepad_joystick.vdf (flat bindings + switch_bindings, xinput outputs) ----------
