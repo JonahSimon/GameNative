@@ -88,6 +88,14 @@ class SteamControllerProfileImporterTest {
         assertEquals(ScOutput.Key(listOf(XKeycode.KEY_D)), d.right)
     }
 
+    @Test
+    fun `new-modes test config decodes stick-dpad and pad-joystick`() {
+        val p = SteamControllerProfileImporter.importConfig(load("sc_newmodes_test.vdf")).defaultProfile()
+        val d = p.leftStick as StickMode.DPad          // stick-as-dpad -> WASD
+        assertEquals(key(XKeycode.KEY_W), d.up); assertEquals(key(XKeycode.KEY_D), d.right)
+        assertEquals(PadMode.Joystick(Stick.RIGHT), p.leftPad)   // pad-as-joystick, output_joystick "1" -> RIGHT
+    }
+
     private fun key(k: XKeycode) = ScOutput.Key(listOf(k))
 
     // ---- v2 schema: gamepad_joystick.vdf (flat bindings + switch_bindings, xinput outputs) ----------
