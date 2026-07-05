@@ -50,6 +50,19 @@ class SteamControllerProfileImporterTest {
         // swipe up = mouse-wheel weapon cycle
         assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_SCROLL_UP), (p.leftPad as PadMode.DirectionalSwipe).up)
     }
+    @Test
+    fun `region + single_button test config decodes the B1 B2 modes`() {
+        val p = SteamControllerProfileImporter.importConfig(load("sc_region_single_test.vdf")).defaultProfile()
+        // B2: left pad = single_button bound to key F (fires the whole surface as one key)
+        val lp = p.leftPad as PadMode.SingleButton
+        assertEquals(ScOutput.Key(listOf(XKeycode.KEY_F)), lp.output)
+        // B1: right pad = mouse_region, left-quarter (center 0.25) x 30% wide, both axes inverted
+        val rp = p.rightPad as PadMode.AbsoluteMouse
+        assertEquals(0.25f, rp.centerX, 1e-4f)
+        assertEquals(0.30f, rp.sizeX, 1e-4f)
+        assertTrue(rp.invertX && rp.invertY)
+    }
+
     private fun key(k: XKeycode) = ScOutput.Key(listOf(k))
 
     // ---- v2 schema: gamepad_joystick.vdf (flat bindings + switch_bindings, xinput outputs) ----------
