@@ -153,6 +153,31 @@ class SteamControllerProfileImporterTest {
     }
 
     @Test
+    fun `surface touch input binds an output to the touch bit`() {
+        // Steam writes a bound surface-touch as a "touch" input in the group (alongside "click"), per a real export:
+        // left stick (joystick) click -> L3, touch -> right bumper.
+        val vdf = """
+            "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "joystick_move" "inputs" {
+                  "click" { "activators" { "Full_Press" { "bindings" { "binding" "xinput_button JOYSTICK_LEFT" } } } }
+                  "touch" { "activators" { "Full_Press" { "bindings" { "binding" "xinput_button SHOULDER_RIGHT" } } } } } }
+              "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "joystick active" } } }
+        """.trimIndent()
+        val p = SteamControllerProfileImporter.importConfig(vdf).defaultProfile()
+        assertEquals(gamepadBtn(ExternalController.IDX_BUTTON_L3), p.buttons[TritonProtocol.BTN_L3]?.output)
+        assertEquals(gamepadBtn(ExternalController.IDX_BUTTON_R1), p.buttons[TritonProtocol.BTN_LSTICK_TOUCH]?.output)
+    }
+
+    @Test
+    fun `touch-bind device config binds each surface touch to its key`() {
+        val p = SteamControllerProfileImporter.importConfig(load("sc_touch_bind_test.vdf")).defaultProfile()
+        assertEquals(key(XKeycode.KEY_1), p.buttons[TritonProtocol.BTN_LPAD_TOUCH]?.output)
+        assertEquals(key(XKeycode.KEY_2), p.buttons[TritonProtocol.BTN_RPAD_TOUCH]?.output)
+        assertEquals(key(XKeycode.KEY_3), p.buttons[TritonProtocol.BTN_LSTICK_TOUCH]?.output)
+        assertEquals(key(XKeycode.KEY_4), p.buttons[TritonProtocol.BTN_RSTICK_TOUCH]?.output)
+    }
+
+    @Test
     fun `gyro ratchet touch mask maps to the any-touch gate`() {
         fun gyroWithMask(settings: String): GyroMode {
             val vdf = """

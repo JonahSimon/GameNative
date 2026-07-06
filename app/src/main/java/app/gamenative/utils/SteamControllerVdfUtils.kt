@@ -385,13 +385,13 @@ object SteamControllerProfileImporter {
         sourceGroup["switch"]?.let { addDigitalInputs(it, SWITCH_MAP, buttons) }
         cm.getObject("switch_bindings")?.let { addDigitalInputs(it, SWITCH_MAP, buttons) } // v2
         sourceGroup["dpad"]?.let { addDigitalInputs(it, DPAD_MAP, buttons) }
-        sourceGroup["joystick"]?.let { leftStick = importStick(it, TritonProtocol.BTN_L3, Stick.LEFT, buttons) }
-        sourceGroup["right_joystick"]?.let { rightStick = importStick(it, TritonProtocol.BTN_R3, Stick.RIGHT, buttons) }
+        sourceGroup["joystick"]?.let { leftStick = importStick(it, TritonProtocol.BTN_L3, TritonProtocol.BTN_LSTICK_TOUCH, Stick.LEFT, buttons) }
+        sourceGroup["right_joystick"]?.let { rightStick = importStick(it, TritonProtocol.BTN_R3, TritonProtocol.BTN_RSTICK_TOUCH, Stick.RIGHT, buttons) }
         sourceGroup["left_trackpad"]?.let {
-            leftPad = importPad(it, TritonProtocol.BTN_LPAD_CLICK, buttons)
+            leftPad = importPad(it, TritonProtocol.BTN_LPAD_CLICK, TritonProtocol.BTN_LPAD_TOUCH, buttons)
         }
         sourceGroup["right_trackpad"]?.let {
-            rightPad = importPad(it, TritonProtocol.BTN_RPAD_CLICK, buttons)
+            rightPad = importPad(it, TritonProtocol.BTN_RPAD_CLICK, TritonProtocol.BTN_RPAD_TOUCH, buttons)
         }
         sourceGroup["left_trigger"]?.let {
             leftTrigger = importTrigger(it, TritonProtocol.BTN_LTRIG_CLICK, TriggerAxis.GAMEPAD_L2, buttons)
@@ -430,10 +430,10 @@ object SteamControllerProfileImporter {
             "button_diamond" -> addDigitalInputs(g, DIAMOND_MAP, buttons)
             "switch" -> addDigitalInputs(g, SWITCH_MAP, buttons)
             "dpad" -> addDigitalInputs(g, DPAD_MAP, buttons)
-            "joystick" -> leftStick = importStick(g, TritonProtocol.BTN_L3, Stick.LEFT, buttons)
-            "right_joystick" -> rightStick = importStick(g, TritonProtocol.BTN_R3, Stick.RIGHT, buttons)
-            "left_trackpad" -> leftPad = importPad(g, TritonProtocol.BTN_LPAD_CLICK, buttons)
-            "right_trackpad" -> rightPad = importPad(g, TritonProtocol.BTN_RPAD_CLICK, buttons)
+            "joystick" -> leftStick = importStick(g, TritonProtocol.BTN_L3, TritonProtocol.BTN_LSTICK_TOUCH, Stick.LEFT, buttons)
+            "right_joystick" -> rightStick = importStick(g, TritonProtocol.BTN_R3, TritonProtocol.BTN_RSTICK_TOUCH, Stick.RIGHT, buttons)
+            "left_trackpad" -> leftPad = importPad(g, TritonProtocol.BTN_LPAD_CLICK, TritonProtocol.BTN_LPAD_TOUCH, buttons)
+            "right_trackpad" -> rightPad = importPad(g, TritonProtocol.BTN_RPAD_CLICK, TritonProtocol.BTN_RPAD_TOUCH, buttons)
             "left_trigger" -> leftTrigger = importTrigger(g, TritonProtocol.BTN_LTRIG_CLICK, TriggerAxis.GAMEPAD_L2, buttons)
             "right_trigger" -> rightTrigger = importTrigger(g, TritonProtocol.BTN_RTRIG_CLICK, TriggerAxis.GAMEPAD_R2, buttons)
             "gyro" -> gyro = importGyro(g)
@@ -505,8 +505,9 @@ object SteamControllerProfileImporter {
 
     // ---- analog sources -----------------------------------------------------------------------------
 
-    private fun importStick(group: VdfObject, clickBit: Int, stick: Stick, buttons: MutableMap<Int, Binding>): StickMode {
+    private fun importStick(group: VdfObject, clickBit: Int, touchBit: Int, stick: Stick, buttons: MutableMap<Int, Binding>): StickMode {
         extractInput(group, "click")?.let { buttons[clickBit] = it }
+        extractInput(group, "touch")?.let { buttons[touchBit] = it } // surface-touch binding (fires on capacitive touch)
         val s = group.getObject("settings")
         fun joystick() = StickMode.JoystickMove(
             stick,
@@ -543,8 +544,9 @@ object SteamControllerProfileImporter {
         }
     }
 
-    private fun importPad(group: VdfObject, clickBit: Int, buttons: MutableMap<Int, Binding>): PadMode {
+    private fun importPad(group: VdfObject, clickBit: Int, touchBit: Int, buttons: MutableMap<Int, Binding>): PadMode {
         extractInput(group, "click")?.let { buttons[clickBit] = it }
+        extractInput(group, "touch")?.let { buttons[touchBit] = it } // surface-touch binding (fires on capacitive touch)
         val s = group.getObject("settings")
         fun mouse() = PadMode.Mouse(sensitivity = (1.0f / 70f) * readSensScale(s), invertY = readInvertY(s, default = true))
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
