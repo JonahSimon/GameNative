@@ -168,6 +168,12 @@ class SteamControllerProfileImporterTest {
     }
 
     @Test
+    fun `gyro touch-to-aim device config decodes to any-touch`() {
+        val p = SteamControllerProfileImporter.importConfig(load("sc_gyro_touch_test.vdf")).defaultProfile()
+        assertEquals(GyroGate.ANY_TOUCH, (p.gyro as GyroMode.Mouse).gate)
+    }
+
+    @Test
     fun `real gyro-gate capture imports without choking`() {
         // A messy experimental export with macros (testMacro1), single_button, mouse_joystick, flickstick, mouse_region,
         // and gyro ratchet masks — a broad stress test that nothing leaks None / throws.
