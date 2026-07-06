@@ -143,6 +143,38 @@ class SteamControllerProfileImporterTest {
         assertEquals(500L, p.buttons[TritonProtocol.BTN_Y]!!.delayEndMs)
     }
 
+    private fun padWithMode(mode: String): PadMode {
+        val vdf = """
+            "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "$mode" "inputs" {} }
+              "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "right_trackpad active" } } }
+        """.trimIndent()
+        return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().rightPad
+    }
+    private fun stickWithMode(mode: String): StickMode {
+        val vdf = """
+            "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "$mode" "inputs" {} }
+              "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "joystick active" } } }
+        """.trimIndent()
+        return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().leftStick
+    }
+
+    /** Regression guard for the mode-name→type map (the class of bug that made `absolute_mouse` an absolute region).
+     *  ONLY `mouse_region` is absolute; every other mouse name is relative. Stick→mouse accepts both name variants. */
+    @Test
+    fun `mouse-family modes map to the correct type`() {
+        assertTrue("mouse_region = absolute region", padWithMode("mouse_region") is PadMode.AbsoluteMouse)
+        assertTrue("absolute_mouse = RELATIVE (legacy name, not a region)", padWithMode("absolute_mouse") is PadMode.Mouse)
+        assertTrue("mouse = relative", padWithMode("mouse") is PadMode.Mouse)
+        assertTrue("relative_mouse = relative", padWithMode("relative_mouse") is PadMode.Mouse)
+        assertTrue("mouse_joystick pad ~ relative (approx)", padWithMode("mouse_joystick") is PadMode.Mouse)
+        assertTrue("joystick_move pad = pad-as-joystick", padWithMode("joystick_move") is PadMode.Joystick)
+        assertTrue("joystick_mouse stick = stick→mouse", stickWithMode("joystick_mouse") is StickMode.Mouse)
+        assertTrue("mouse_joystick stick (name variant) = stick→mouse, not dropped", stickWithMode("mouse_joystick") is StickMode.Mouse)
+        assertTrue("joystick_move stick = joystick", stickWithMode("joystick_move") is StickMode.JoystickMove)
+    }
+
     private fun key(k: XKeycode) = ScOutput.Key(listOf(k))
 
     // ---- v2 schema: gamepad_joystick.vdf (flat bindings + switch_bindings, xinput outputs) ----------

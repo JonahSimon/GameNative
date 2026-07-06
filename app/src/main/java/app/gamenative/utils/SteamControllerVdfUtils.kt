@@ -519,7 +519,9 @@ object SteamControllerProfileImporter {
                 Timber.tag(TAG).d("stick mode 'joystick_camera' -> approximating as JoystickMove (curve TODO)")
                 joystick()
             }
-            "joystick_mouse" -> StickMode.Mouse(
+            // Stick→mouse. `joystick_mouse` is the stick name, `mouse_joystick` the pad name — accept both here so a
+            // shared/`reference`d group that carries the pad name on a stick source still maps (never silently drops).
+            "joystick_mouse", "mouse_joystick" -> StickMode.Mouse(
                 sensitivity = 12f * readSensScale(s),
                 deadzone = readDeadzone(s, default = 0.10f),
             )
@@ -585,8 +587,10 @@ object SteamControllerProfileImporter {
                 invertY = readInvertY(s, default = true),
                 deadzone = readDeadzone(s, default = 0.12f),
             )
-            // `absolute_mouse` = the standard relative trackpad mouse (see note above); `mouse_joystick` approximated too.
-            "mouse", "relative_mouse", "mouse_joystick", "absolute_mouse" -> mouse()
+            // All the relative-mouse pad names → `PadMode.Mouse`. `absolute_mouse` = the standard relative trackpad
+            // mouse (NOT a region — that's `mouse_region`, handled above); `mouse_joystick`/`joystick_mouse`
+            // (velocity-from-deflection) approximated as relative for now. Only `mouse_region` is absolute.
+            "mouse", "relative_mouse", "mouse_joystick", "joystick_mouse", "absolute_mouse" -> mouse()
             // Overlay-tier menus: the selection LOGIC is built (radial = angle→slot, touch = grid cell→slot,
             // commit pulses the slot). The visual ring/grid HUD is the step-6 overlay (separate). hotbar ≈ touch grid.
             "touch_menu", "radial_menu", "hotbar" -> importMenu(group, mode)
