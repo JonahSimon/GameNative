@@ -301,6 +301,7 @@ data class EditAnalog(
             is PadMode.SingleButton -> null
             is PadMode.DirectionalSwipe -> null
             is PadMode.Joystick -> null
+            is PadMode.MouseJoystick -> null
             is PadMode.ScrollWheel -> EditAnalog(AnalogMode.SCROLL_WHEEL, scrollStep = m.step, invertY = m.invertY)
             is PadMode.DPad -> EditAnalog(
                 AnalogMode.DPAD, deadzonePct = (m.deadzone * 100f).roundToInt(),

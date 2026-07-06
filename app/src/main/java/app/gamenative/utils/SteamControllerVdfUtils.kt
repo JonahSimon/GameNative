@@ -587,10 +587,13 @@ object SteamControllerProfileImporter {
                 invertY = readInvertY(s, default = true),
                 deadzone = readDeadzone(s, default = 0.12f),
             )
-            // All the relative-mouse pad names → `PadMode.Mouse`. `absolute_mouse` = the standard relative trackpad
-            // mouse (NOT a region — that's `mouse_region`, handled above); `mouse_joystick`/`joystick_mouse`
-            // (velocity-from-deflection) approximated as relative for now. Only `mouse_region` is absolute.
-            "mouse", "relative_mouse", "mouse_joystick", "joystick_mouse", "absolute_mouse" -> mouse()
+            // Mouse Joystick: pad = self-centering joystick that drives the mouse (displacement from center = velocity).
+            "mouse_joystick", "joystick_mouse" -> PadMode.MouseJoystick(
+                sensitivity = 20f * readSensScale(s), invertY = readInvertY(s, default = false),
+            )
+            // Relative trackpad mouse (drag = delta). `absolute_mouse` = Steam's legacy name for THIS (NOT a region —
+            // that's `mouse_region`, handled above). Only `mouse_region` is absolute.
+            "mouse", "relative_mouse", "absolute_mouse" -> mouse()
             // Overlay-tier menus: the selection LOGIC is built (radial = angle→slot, touch = grid cell→slot,
             // commit pulses the slot). The visual ring/grid HUD is the step-6 overlay (separate). hotbar ≈ touch grid.
             "touch_menu", "radial_menu", "hotbar" -> importMenu(group, mode)
@@ -713,7 +716,10 @@ object SteamControllerProfileImporter {
             "gyro_to_mouse", "mouse", "absolute_mouse", "mouse_region" ->
                 GyroMode.Mouse((1.0f / 900f) * readSensScale(s), GyroGate.EITHER_GRIP)
             "gyro_to_joystick", "gyro_to_joystick_camera", "gyro_to_joystick_deflection" ->
-                GyroMode.Joystick(Stick.RIGHT, (1.0f / 6000f) * readSensScale(s), GyroGate.EITHER_GRIP)
+                GyroMode.Joystick(
+                    stick = if (s?.getString("output_joystick") == "1") Stick.LEFT else Stick.RIGHT,
+                    sensitivity = (1.0f / 6000f) * readSensScale(s), gate = GyroGate.EITHER_GRIP,
+                )
             "", "disabled" -> GyroMode.None
             else -> { Timber.tag(TAG).d("unsupported gyro mode '$mode' -> None"); GyroMode.None }
         }

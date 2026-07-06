@@ -29,8 +29,46 @@ class AdvancedModesTest {
     fun `gyro joystick mode deflects the output stick`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Joystick(Stick.RIGHT, sensitivity = 0.001f, gate = GyroGate.ALWAYS)), haptics = null)
-        interp.apply(TritonState().apply { gyroZ = 500 }) // yaw -> right stick X (500 * 0.001 = 0.5)
-        assertTrue("right stick X deflected by gyro", sink.maxThumbRX > 0.4f)
+        interp.apply(TritonState().apply { gyroZ = 500 }) // yaw -> right stick X; natural default negates -> -0.5
+        assertTrue("right stick X deflected by gyro (natural sign)", sink.minThumbRX < -0.4f)
+    }
+
+    @Test
+    fun `gyro mouse uses the natural direction and per-axis invert`() {
+        val nat = RecordingSink()
+        ProfileInterpreter(nat, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.ALWAYS)), haptics = null)
+            .apply(TritonState().apply { gyroZ = 500 })  // yaw-right -> aim-right = NEGATIVE raw sign (natural)
+        assertTrue("natural yaw -> dx < 0", nat.mouseDx < 0)
+        val inv = RecordingSink()
+        ProfileInterpreter(inv, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.ALWAYS, invertX = true)), haptics = null)
+            .apply(TritonState().apply { gyroZ = 500 })
+        assertTrue("invertX flips it back to dx > 0", inv.mouseDx > 0)
+    }
+
+    @Test
+    fun `gyro stick-touch gate aims only while the stick is touched`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.LEFT_STICK_TOUCH)), haptics = null)
+        interp.apply(TritonState().apply { gyroZ = 500 })
+        assertEquals(0, sink.mouseMoves)
+        interp.apply(TritonState().apply { gyroZ = 500; buttons = TritonProtocol.BTN_LSTICK_TOUCH })
+        assertTrue("gyro aims while stick touched", sink.mouseMoves > 0)
+    }
+
+    @Test
+    fun `pad mouse-joystick moves the cursor by displacement from center`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.MouseJoystick(sensitivity = 20f, deadzone = 0.1f)), haptics = null)
+        // finger at center while touched -> no motion (self-centering)
+        interp.apply(TritonState().apply { buttons = TritonProtocol.BTN_LPAD_TOUCH; leftPadX = 0; leftPadY = 0 })
+        assertEquals(0, sink.mouseMoves)
+        // finger held far right -> cursor glides right, keeps moving each frame while held
+        interp.apply(TritonState().apply { buttons = TritonProtocol.BTN_LPAD_TOUCH; leftPadX = 32000; leftPadY = 0 })
+        assertTrue("cursor moved right", sink.mouseDx > 0)
+        // lift -> stops
+        val before = sink.mouseMoves
+        interp.apply(TritonState())
+        assertEquals("no motion after lift", before, sink.mouseMoves)
     }
 
     @Test

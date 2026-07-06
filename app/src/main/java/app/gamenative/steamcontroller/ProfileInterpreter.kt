@@ -691,6 +691,7 @@ class ProfileInterpreter(
             is PadMode.DPad -> applyPadDpad(mode, rt, s.has(touchBit), x, y)
             is PadMode.ScrollWheel -> applyPadScroll(mode, rt, s.has(touchBit), y)
             is PadMode.Joystick -> applyPadJoystick(mode, s.has(touchBit), x, y)
+            is PadMode.MouseJoystick -> applyPadMouseJoystick(mode, s.has(touchBit), x, y)
             is PadMode.RadialMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, effectiveCommit(mode.onClick), rt.menu, center = mode.center, directional = mode.directional, menuId = menuId)
             is PadMode.TouchMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, effectiveCommit(mode.onClick), rt.menu, menuId = menuId)
         }
@@ -886,6 +887,18 @@ class ProfileInterpreter(
         if (mode.stick == Stick.LEFT) { gp.thumbLX = vx; gp.thumbLY = vy } else { gp.thumbRX = vx; gp.thumbRY = vy }
     }
 
+    /** Mouse Joystick: the finger's displacement from the pad CENTER drives a cursor velocity (self-centering, like
+     *  a joystick that outputs mouse). Zero inside the deadzone; keeps moving while held off-centre; stops on lift. */
+    private fun applyPadMouseJoystick(mode: PadMode.MouseJoystick, touched: Boolean, x: Int, y: Int) {
+        if (!touched) return
+        val nx = (x / 32768f).coerceIn(-1f, 1f)
+        val ny = (y / 32768f).coerceIn(-1f, 1f) // pad +Y up
+        if (hypot(nx, ny) < mode.deadzone) return
+        val dx = (nx * mode.sensitivity).toInt()
+        val dy = ((if (mode.invertY) ny else -ny) * mode.sensitivity).toInt() // screen Y grows downward
+        if (dx != 0 || dy != 0) sink.mouseMove(dx, dy)
+    }
+
     /** Single-button pad: whole surface = one button, pressed while touched/clicked, released on lift. */
     private fun applyPadSingle(mode: PadMode.SingleButton, rt: PadRuntime, engaged: Boolean) {
         if (engaged && rt.singlePressed == null) { rt.singlePressed = mode.output; pressOutput(mode.output) }
@@ -1000,14 +1013,20 @@ class ProfileInterpreter(
         GyroGate.EITHER_GRIP -> s.has(TritonProtocol.BTN_LGRIP) || s.has(TritonProtocol.BTN_RGRIP)
         GyroGate.LEFT_PAD_TOUCH -> s.has(TritonProtocol.BTN_LPAD_TOUCH)
         GyroGate.RIGHT_PAD_TOUCH -> s.has(TritonProtocol.BTN_RPAD_TOUCH)
+        GyroGate.LEFT_STICK_TOUCH -> s.has(TritonProtocol.BTN_LSTICK_TOUCH)
+        GyroGate.RIGHT_STICK_TOUCH -> s.has(TritonProtocol.BTN_RSTICK_TOUCH)
     }
 
     private fun applyGyro(mode: GyroMode, s: TritonState) {
         when (mode) {
             is GyroMode.Mouse -> {
                 if (gyroGateOpen(mode.gate, s)) {
-                    val dx = (s.gyroZ * mode.sensitivity).toInt()   // yaw
-                    val dy = (s.gyroX * mode.sensitivity).toInt()   // pitch
+                    // Natural default: yaw-right → aim-right, pitch-up → aim-up (negate the raw sign, which felt
+                    // backwards on device). invertX/invertY flip each axis back.
+                    val sx = if (mode.invertX) 1f else -1f
+                    val sy = if (mode.invertY) 1f else -1f
+                    val dx = (sx * s.gyroZ * mode.sensitivity).toInt()   // yaw
+                    val dy = (sy * s.gyroX * mode.sensitivity).toInt()   // pitch
                     if (dx != 0 || dy != 0) sink.mouseMove(dx, dy)
                 }
             }
@@ -1015,8 +1034,10 @@ class ProfileInterpreter(
                 // Gyro rate -> stick deflection (yaw→X, pitch→Y), ADDED on top of any physical stick when gated
                 // open (so gyro layers onto stick-look rather than fighting it); no-op when gated closed.
                 if (gyroGateOpen(mode.gate, s)) {
-                    val x = (s.gyroZ * mode.sensitivity).coerceIn(-1f, 1f)
-                    val y = (s.gyroX * mode.sensitivity).coerceIn(-1f, 1f)
+                    val sx = if (mode.invertX) 1f else -1f
+                    val sy = if (mode.invertY) 1f else -1f
+                    val x = (sx * s.gyroZ * mode.sensitivity).coerceIn(-1f, 1f)
+                    val y = (sy * s.gyroX * mode.sensitivity).coerceIn(-1f, 1f)
                     if (mode.stick == Stick.LEFT) {
                         gp.thumbLX = (gp.thumbLX + x).coerceIn(-1f, 1f); gp.thumbLY = (gp.thumbLY + y).coerceIn(-1f, 1f)
                     } else {

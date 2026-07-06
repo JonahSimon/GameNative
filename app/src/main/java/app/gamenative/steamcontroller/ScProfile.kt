@@ -326,6 +326,12 @@ sealed class PadMode {
         val invertX: Boolean = false, val invertY: Boolean = false,
     ) : PadMode()
     /**
+     * Mouse Joystick (Steam pad `mouse_joystick`): the pad acts like a self-centering joystick that drives the
+     * MOUSE — the finger's displacement from the pad CENTER sets a cursor velocity (further out = faster), zero at
+     * center, stops on lift. Unlike relative [Mouse] (drag = delta) it keeps moving while the finger is held off-centre.
+     */
+    data class MouseJoystick(val sensitivity: Float = 20f, val deadzone: Float = 0.10f, val invertY: Boolean = false) : PadMode()
+    /**
      * Single-button pad (Steam `single_button`): touching/clicking anywhere on the pad fires [output]. No cursor,
      * no menu — the whole surface is one button. [onClick] = fire on pad CLICK (else on TOUCH).
      */
@@ -349,19 +355,20 @@ enum class SwipeAxes { BOTH, HORIZONTAL, VERTICAL }
 /** One entry of a Radial/Touch menu: the [binding] it fires on commit + a [label] (for the step-6 overlay). */
 data class MenuSlot(val binding: Binding, val label: String = "")
 
-/** Gyro source mode. */
+/** Gyro source mode. [invertX]/[invertY] flip each axis from the natural default (yaw-right→aim-right,
+ *  pitch-up→aim-up); the natural default was chosen after on-device feedback that the raw sign felt backwards. */
 sealed class GyroMode {
     object None : GyroMode()
     /** Gyro rate -> mouse aim delta, gated by [gate] (e.g. only while a grip is held). */
-    data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP) : GyroMode()
+    data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false) : GyroMode()
     /** Gyro rate -> virtual XInput stick deflection (Steam `gyro_to_joystick` / `_deflection` — camera-style aim
      *  on games with stick-only look). Yaw→X, pitch→Y, scaled by [sensitivity], gated by [gate]. */
-    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP) : GyroMode()
+    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false) : GyroMode()
 }
 
-/** When a gyro mode is active. Grips are the rear paddles; the pad-touch gates enable "touch-to-aim" (gyro only
- *  while the aim trackpad is touched — the most common gyro-mouse style). */
-enum class GyroGate { ALWAYS, LEFT_GRIP, RIGHT_GRIP, EITHER_GRIP, LEFT_PAD_TOUCH, RIGHT_PAD_TOUCH }
+/** When a gyro mode is active. Grips are the rear paddles; the pad/stick-touch gates enable "touch-to-aim" (gyro
+ *  only while the aim surface is touched — the most common gyro-mouse style). */
+enum class GyroGate { ALWAYS, LEFT_GRIP, RIGHT_GRIP, EITHER_GRIP, LEFT_PAD_TOUCH, RIGHT_PAD_TOUCH, LEFT_STICK_TOUCH, RIGHT_STICK_TOUCH }
 
 /**
  * Trackpad/haptic feel parameters — profile-driven so the binding-editor UI can expose full haptics control

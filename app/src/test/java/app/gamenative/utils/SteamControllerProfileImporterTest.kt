@@ -143,6 +143,28 @@ class SteamControllerProfileImporterTest {
         assertEquals(500L, p.buttons[TritonProtocol.BTN_Y]!!.delayEndMs)
     }
 
+    @Test
+    fun `gyro + mouse-joystick test config decodes the intended modes`() {
+        val p = SteamControllerProfileImporter.importConfig(load("sc_gyro_mousejoy_test.vdf")).defaultProfile()
+        assertTrue("gyro = mouse aim", p.gyro is GyroMode.Mouse)
+        assertTrue("right pad = mouse joystick", p.rightPad is PadMode.MouseJoystick)
+        assertTrue("left stick = joystick", p.leftStick is StickMode.JoystickMove)
+    }
+
+    @Test
+    fun `gyro_to_joystick honors output_joystick for the target stick`() {
+        fun gyroWith(oj: String): GyroMode {
+            val vdf = """
+                "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+                  "group" { "id" "0" "mode" "gyro_to_joystick" "inputs" {} "settings" { "output_joystick" "$oj" } }
+                  "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "gyro active" } } }
+            """.trimIndent()
+            return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().gyro
+        }
+        assertEquals(Stick.LEFT, (gyroWith("1") as GyroMode.Joystick).stick)
+        assertEquals(Stick.RIGHT, (gyroWith("2") as GyroMode.Joystick).stick)
+    }
+
     private fun padWithMode(mode: String): PadMode {
         val vdf = """
             "controller_mappings" { "version" "3" "controller_type" "controller_triton"
@@ -168,7 +190,7 @@ class SteamControllerProfileImporterTest {
         assertTrue("absolute_mouse = RELATIVE (legacy name, not a region)", padWithMode("absolute_mouse") is PadMode.Mouse)
         assertTrue("mouse = relative", padWithMode("mouse") is PadMode.Mouse)
         assertTrue("relative_mouse = relative", padWithMode("relative_mouse") is PadMode.Mouse)
-        assertTrue("mouse_joystick pad ~ relative (approx)", padWithMode("mouse_joystick") is PadMode.Mouse)
+        assertTrue("mouse_joystick pad = self-centering mouse joystick", padWithMode("mouse_joystick") is PadMode.MouseJoystick)
         assertTrue("joystick_move pad = pad-as-joystick", padWithMode("joystick_move") is PadMode.Joystick)
         assertTrue("joystick_mouse stick = stick→mouse", stickWithMode("joystick_mouse") is StickMode.Mouse)
         assertTrue("mouse_joystick stick (name variant) = stick→mouse, not dropped", stickWithMode("mouse_joystick") is StickMode.Mouse)
