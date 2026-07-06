@@ -1015,6 +1015,8 @@ class ProfileInterpreter(
         GyroGate.RIGHT_PAD_TOUCH -> s.has(TritonProtocol.BTN_RPAD_TOUCH)
         GyroGate.LEFT_STICK_TOUCH -> s.has(TritonProtocol.BTN_LSTICK_TOUCH)
         GyroGate.RIGHT_STICK_TOUCH -> s.has(TritonProtocol.BTN_RSTICK_TOUCH)
+        GyroGate.ANY_TOUCH -> s.has(TritonProtocol.BTN_LPAD_TOUCH) || s.has(TritonProtocol.BTN_RPAD_TOUCH) ||
+            s.has(TritonProtocol.BTN_LSTICK_TOUCH) || s.has(TritonProtocol.BTN_RSTICK_TOUCH)
     }
 
     private fun applyGyro(mode: GyroMode, s: TritonState) {

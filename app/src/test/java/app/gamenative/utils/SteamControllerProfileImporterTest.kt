@@ -1,6 +1,7 @@
 package app.gamenative.utils
 
 import app.gamenative.steamcontroller.Activator
+import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
 import app.gamenative.steamcontroller.PadMode
@@ -149,6 +150,30 @@ class SteamControllerProfileImporterTest {
         assertTrue("gyro = mouse aim", p.gyro is GyroMode.Mouse)
         assertTrue("right pad = mouse joystick", p.rightPad is PadMode.MouseJoystick)
         assertTrue("left stick = joystick", p.leftStick is StickMode.JoystickMove)
+    }
+
+    @Test
+    fun `gyro ratchet touch mask maps to the any-touch gate`() {
+        fun gyroWithMask(settings: String): GyroMode {
+            val vdf = """
+                "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+                  "group" { "id" "0" "mode" "gyro_to_mouse" "inputs" {} "settings" { $settings } }
+                  "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "gyro active" } } }
+            """.trimIndent()
+            return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().gyro
+        }
+        // 211106234105856 = bits {19,20,46,47} = the 4 touch surfaces (real 2026-07-06 export) -> touch-to-aim
+        assertEquals(GyroGate.ANY_TOUCH, (gyroWithMask(""" "gyro_ratchet_button_mask" "211106234105856" """) as GyroMode.Mouse).gate)
+        assertEquals(GyroGate.EITHER_GRIP, (gyroWithMask("") as GyroMode.Mouse).gate) // no mask -> grip default
+    }
+
+    @Test
+    fun `real gyro-gate capture imports without choking`() {
+        // A messy experimental export with macros (testMacro1), single_button, mouse_joystick, flickstick, mouse_region,
+        // and gyro ratchet masks — a broad stress test that nothing leaks None / throws.
+        val cfg = SteamControllerProfileImporter.importConfig(load("testgyro_gate_capture.vdf"))
+        assertTrue("expected action sets", cfg.sets.isNotEmpty())
+        assertFalse("no None leaked into buttons", cfg.defaultProfile().buttons.values.any { it.output is ScOutput.None })
     }
 
     @Test

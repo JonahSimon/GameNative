@@ -368,7 +368,12 @@ sealed class GyroMode {
 
 /** When a gyro mode is active. Grips are the rear paddles; the pad/stick-touch gates enable "touch-to-aim" (gyro
  *  only while the aim surface is touched — the most common gyro-mouse style). */
-enum class GyroGate { ALWAYS, LEFT_GRIP, RIGHT_GRIP, EITHER_GRIP, LEFT_PAD_TOUCH, RIGHT_PAD_TOUCH, LEFT_STICK_TOUCH, RIGHT_STICK_TOUCH }
+enum class GyroGate {
+    ALWAYS, LEFT_GRIP, RIGHT_GRIP, EITHER_GRIP, LEFT_PAD_TOUCH, RIGHT_PAD_TOUCH, LEFT_STICK_TOUCH, RIGHT_STICK_TOUCH,
+    /** Gyro active while ANY trackpad OR thumbstick is touched (Steam `gyro_ratchet_button_mask` covering the four
+     *  touch surfaces, require-any). The common "touch anything to aim" gate. */
+    ANY_TOUCH,
+}
 
 /**
  * Trackpad/haptic feel parameters — profile-driven so the binding-editor UI can expose full haptics control

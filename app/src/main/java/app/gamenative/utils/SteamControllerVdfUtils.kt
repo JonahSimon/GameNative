@@ -710,19 +710,31 @@ object SteamControllerProfileImporter {
 
     private fun importGyro(group: VdfObject): GyroMode {
         val s = group.getObject("settings")
-        // Confirmed vdf modes: gyro_to_mouse, gyro_to_joystick(_camera)/_deflection. `gyro_button` (activation button)
-        // isn't mapped to a bit yet → default to EITHER_GRIP gate (Steam's common default).
+        // Confirmed vdf modes: gyro_to_mouse, gyro_to_joystick(_camera)/_deflection.
+        val gate = gyroGate(s)
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
             "gyro_to_mouse", "mouse", "absolute_mouse", "mouse_region" ->
-                GyroMode.Mouse((1.0f / 900f) * readSensScale(s), GyroGate.EITHER_GRIP)
+                GyroMode.Mouse((1.0f / 900f) * readSensScale(s), gate)
             "gyro_to_joystick", "gyro_to_joystick_camera", "gyro_to_joystick_deflection" ->
                 GyroMode.Joystick(
                     stick = if (s?.getString("output_joystick") == "1") Stick.LEFT else Stick.RIGHT,
-                    sensitivity = (1.0f / 6000f) * readSensScale(s), gate = GyroGate.EITHER_GRIP,
+                    sensitivity = (1.0f / 6000f) * readSensScale(s), gate = gate,
                 )
             "", "disabled" -> GyroMode.None
             else -> { Timber.tag(TAG).d("unsupported gyro mode '$mode' -> None"); GyroMode.None }
         }
+    }
+
+    /** The four thumb-surface touch bits in Steam's `gyro_ratchet_button_mask` (from a real 4-touch export 2026-07-06:
+     *  bits 19,20,46,47 = L/R pad + L/R stick touch, collectively). Which individual bit is which surface isn't yet
+     *  pinned (needs single-surface captures), so a touch-covering mask maps to the "any touch" gate. */
+    private val GYRO_TOUCH_MASK = (1L shl 19) or (1L shl 20) or (1L shl 46) or (1L shl 47) // = 211106234105856
+
+    /** Resolve a gyro group's activation gate. `gyro_ratchet_button_mask` covering any touch surface → touch-to-aim;
+     *  otherwise Steam's common grip default. (Grip/button bit positions in the mask aren't captured yet.) */
+    private fun gyroGate(s: VdfObject?): GyroGate {
+        val mask = s?.getString("gyro_ratchet_button_mask")?.toLongOrNull() ?: 0L
+        return if (mask != 0L && (mask and GYRO_TOUCH_MASK) != 0L) GyroGate.ANY_TOUCH else GyroGate.EITHER_GRIP
     }
 
     // ---- per-group tunable settings -> existing model fields (the common ones; the long tail is step 3/7) ----
