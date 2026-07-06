@@ -69,6 +69,17 @@ class AdvancedModesTest {
     }
 
     @Test
+    fun `gyro all-touch gate aims only when every surface is touched`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.ALL_TOUCH)), haptics = null)
+        val three = TritonProtocol.BTN_LPAD_TOUCH or TritonProtocol.BTN_RPAD_TOUCH or TritonProtocol.BTN_LSTICK_TOUCH
+        interp.apply(TritonState().apply { gyroZ = 500; buttons = three })
+        assertEquals("3 of 4 touched -> still gated off", 0, sink.mouseMoves)
+        interp.apply(TritonState().apply { gyroZ = 500; buttons = three or TritonProtocol.BTN_RSTICK_TOUCH })
+        assertTrue("all 4 touched -> aims", sink.mouseMoves > 0)
+    }
+
+    @Test
     fun `pad mouse-joystick moves the cursor by displacement from center`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.MouseJoystick(sensitivity = 20f, deadzone = 0.1f)), haptics = null)

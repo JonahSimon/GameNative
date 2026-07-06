@@ -373,6 +373,8 @@ enum class GyroGate {
     /** Gyro active while ANY trackpad OR thumbstick is touched (Steam `gyro_ratchet_button_mask` covering the four
      *  touch surfaces, require-any). The common "touch anything to aim" gate. */
     ANY_TOUCH,
+    /** Gyro active only while ALL four touch surfaces are touched at once (mask covering them, require-all). */
+    ALL_TOUCH,
 }
 
 /**
