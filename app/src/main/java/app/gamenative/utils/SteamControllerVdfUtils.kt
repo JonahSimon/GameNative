@@ -552,9 +552,11 @@ object SteamControllerProfileImporter {
                 deadzone = readDeadzone(s, default = 0.35f),
             )
             "scrollwheel" -> PadMode.ScrollWheel()
-            // Absolute / region mouse: finger position → 1:1 screen position within a region. Steam params
+            // Mouse Region (Steam `mouse_region`): finger position → 1:1 screen position within a region. Params
             // (confirmed): position_x/y (center %, def 50), scale (size %, def 80), scale_x/y (def 100), invert_x/y.
-            "mouse_region", "absolute_mouse" -> {
+            // NOTE: `absolute_mouse` is NOT this — it's Steam's legacy name for the standard RELATIVE trackpad mouse
+            // (carries As-Mouse settings: sensitivity/trackball/friction/acceleration, no region), handled below.
+            "mouse_region" -> {
                 fun pct(key: String, def: Float) = (s?.getString(key)?.toFloatOrNull() ?: def) / 100f
                 val scale = pct("scale", 80f)
                 PadMode.AbsoluteMouse(
@@ -583,7 +585,8 @@ object SteamControllerProfileImporter {
                 invertY = readInvertY(s, default = true),
                 deadzone = readDeadzone(s, default = 0.12f),
             )
-            "mouse", "relative_mouse", "mouse_joystick" -> mouse()
+            // `absolute_mouse` = the standard relative trackpad mouse (see note above); `mouse_joystick` approximated too.
+            "mouse", "relative_mouse", "mouse_joystick", "absolute_mouse" -> mouse()
             // Overlay-tier menus: the selection LOGIC is built (radial = angle→slot, touch = grid cell→slot,
             // commit pulses the slot). The visual ring/grid HUD is the step-6 overlay (separate). hotbar ≈ touch grid.
             "touch_menu", "radial_menu", "hotbar" -> importMenu(group, mode)

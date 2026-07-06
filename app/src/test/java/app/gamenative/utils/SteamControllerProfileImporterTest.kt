@@ -260,8 +260,9 @@ class SteamControllerProfileImporterTest {
         // button_menu -> sr_enable (controller_action) -> Start-side button unbound
         assertFalse(b.containsKey(TritonProtocol.BTN_VIEW))
 
-        // right_trackpad in absolute_mouse mode -> AbsoluteMouse (1:1 position map); its Soft_Press click -> LMB
-        assertTrue(p.rightPad is PadMode.AbsoluteMouse)
+        // right_trackpad in absolute_mouse mode -> relative Mouse (Steam's legacy name for the trackpad mouse, NOT a
+        // region map — that's mouse_region); its Soft_Press click -> LMB
+        assertTrue(p.rightPad is PadMode.Mouse)
         assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_LEFT), b[TritonProtocol.BTN_RPAD_CLICK]?.output)
 
         // dpad source: gr_clip (action, skipped) + TAB / RETURN / ESCAPE on the other three directions
@@ -304,8 +305,8 @@ class SteamControllerProfileImporterTest {
         assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_RIGHT), (p.leftTrigger as TriggerMode.Staged).full)
         assertTrue(p.rightTrigger is TriggerMode.Staged)
 
-        // right trackpad = absolute_mouse -> AbsoluteMouse (1:1 position map)
-        assertTrue(p.rightPad is PadMode.AbsoluteMouse)
+        // right trackpad = absolute_mouse -> relative Mouse (legacy name for the trackpad mouse; region = mouse_region)
+        assertTrue(p.rightPad is PadMode.Mouse)
 
         //  - left trackpad -> reference -> touch_menu: now imported as a real grid (step-6 selection logic;
         //    overlay HUD still pending). 12 hotkeys 1..= in a 4x3 grid.
@@ -482,8 +483,8 @@ class SteamControllerProfileImporterTest {
         assertEquals(StickMode.JoystickMove(Stick.RIGHT), p.rightStick)            // via reference -> group 10 (defaults)
         assertEquals(ScOutput.GamepadButton(ExternalController.IDX_BUTTON_R3.toInt()), b[TritonProtocol.BTN_R3]?.output)
         assertTrue(p.leftPad is PadMode.ScrollWheel)
-        // right pad: base absolute_mouse wins over modeshift dpad; invert_y 0 read from settings
-        val rp = p.rightPad as PadMode.AbsoluteMouse
+        // right pad: base absolute_mouse (-> relative Mouse) wins over modeshift dpad; invert_y 0 read from settings
+        val rp = p.rightPad as PadMode.Mouse
         assertEquals(false, rp.invertY)
         assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_LEFT), b[TritonProtocol.BTN_RPAD_CLICK]?.output)
         assertEquals(ScOutput.MouseButton(Pointer.Button.BUTTON_RIGHT), (p.leftTrigger as TriggerMode.Staged).full)
@@ -539,8 +540,8 @@ class SteamControllerProfileImporterTest {
         """.trimIndent()
 
         val p = SteamControllerProfileImporter.import(vdf)
-        // base right_trackpad group (absolute_mouse) wins, not the mode-shift dpad group
-        assertTrue("base absolute_mouse should win over the modeshift dpad group", p.rightPad is PadMode.AbsoluteMouse)
+        // base right_trackpad group (absolute_mouse -> relative Mouse) wins, not the mode-shift dpad group
+        assertTrue("base absolute_mouse should win over the modeshift dpad group", p.rightPad is PadMode.Mouse)
         assertEquals(key(XKeycode.KEY_Q), p.buttons[TritonProtocol.BTN_A]?.output)
     }
 }
