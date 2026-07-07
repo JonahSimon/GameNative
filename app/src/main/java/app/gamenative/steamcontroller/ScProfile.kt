@@ -265,7 +265,13 @@ sealed class PadMode {
      * so slow drags stay smooth. Raise [jitterFloor] if the cursor still wanders at rest; lower it if slow aiming
      * feels dead.
      */
-    data class Mouse(val sensitivity: Float, val invertY: Boolean = true, val jitterFloor: Int = 24) : PadMode()
+    data class Mouse(
+        val sensitivity: Float, val invertY: Boolean = true, val jitterFloor: Int = 24,
+        /** Rotate Output (Steam `rotation`, −180..180°): rotate the pointer-delta vector. */
+        val rotation: Float = 0f,
+        /** Per-axis output scale (Steam `sensitivity_horiz_scale`/`_vert_scale` %/100; the H/V Output Mixer). */
+        val horizScale: Float = 1f, val vertScale: Float = 1f,
+    ) : PadMode()
     /**
      * Button Pad / ToME grid: pad split into [cols]×[rows]; the cell under the finger fires its output.
      * [cells] is row-major, **row 0 = BOTTOM, col 0 = LEFT** (`cells[row*cols + col]`); pad with fewer cells

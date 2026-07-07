@@ -978,8 +978,14 @@ class ProfileInterpreter(
         rt.lastX = (x - ux * floor).roundToInt()        // anchor trails the finger by the deadzone radius
         rt.lastY = (y - uy * floor).roundToInt()
         val over = dist - floor
-        val rawMoveX = ux * over * mode.sensitivity
-        val rawMoveY = (if (mode.invertY) -uy else uy) * over * mode.sensitivity
+        var rawMoveX = ux * over * mode.sensitivity * mode.horizScale
+        var rawMoveY = (if (mode.invertY) -uy else uy) * over * mode.sensitivity * mode.vertScale
+        if (mode.rotation != 0f) { // Rotate Output: spin the pointer-delta vector.
+            val r = Math.toRadians(mode.rotation.toDouble())
+            val c = kotlin.math.cos(r).toFloat(); val sn = kotlin.math.sin(r).toFloat()
+            val rx = rawMoveX * c - rawMoveY * sn; val ry = rawMoveX * sn + rawMoveY * c
+            rawMoveX = rx; rawMoveY = ry
+        }
         // Optional low-pass (Touchpad smoothing): EMA the motion to damp frame-to-frame jitter (costs a little lag).
         val a = ScTuningStore.emaAlpha(padSmoothing)
         rt.smoothX = rt.smoothX * (1f - a) + rawMoveX * a

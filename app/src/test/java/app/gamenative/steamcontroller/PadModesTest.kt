@@ -50,6 +50,22 @@ class PadModesTest {
     }
 
     @Test
+    fun `relative mouse H-V scale halves the vertical axis`() {
+        // vertScale 0.5: a vertical drag emits half the delta of an equal horizontal drag.
+        fun move(mode: PadMode.Mouse, toX: Int, toY: Int): Pair<Long, Long> {
+            val sink = RecordingSink()
+            val interp = ProfileInterpreter(sink, ScProfile(leftPad = mode), haptics = null)
+            interp.apply(leftPadState(touch = true, x = 0, y = 0))       // anchor
+            interp.apply(leftPadState(touch = true, x = toX, y = toY))   // move
+            return sink.mouseDx to sink.mouseDy
+        }
+        val m = PadMode.Mouse(sensitivity = 1f, vertScale = 0.5f)
+        val (hx, _) = move(m, 3000, 0)
+        val (_, vy) = move(m, 0, 3000)
+        assertEquals("vertical delta is half the horizontal", hx / 2, kotlin.math.abs(vy))
+    }
+
+    @Test
     fun `absolute mouse rotate output rotates the position vector`() {
         val sink = RecordingSink()
         // Full screen, rotated 90°: a finger at the right edge maps to bottom-center (right offset -> down offset).

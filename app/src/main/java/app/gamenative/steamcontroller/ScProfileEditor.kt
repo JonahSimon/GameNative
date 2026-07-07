@@ -223,6 +223,10 @@ data class EditAnalog(
     val outputStick: String = "RIGHT",
     /** SCROLL_WHEEL: pad-units of travel per wheel click. */
     val scrollStep: Int = 6000,
+    /** MOUSE (relative pad): Rotate Output (deg) + per-axis H/V output scale (1.0 = 100%). */
+    val mouseRotation: Float = 0f,
+    val mouseHorizScale: Float = 1f,
+    val mouseVertScale: Float = 1f,
     /** DPAD: the four directional outputs. */
     val up: EditBinding = EditBinding(),
     val down: EditBinding = EditBinding(),
@@ -251,7 +255,8 @@ data class EditAnalog(
 
     fun toPadMode(): PadMode? = when (mode) {
         AnalogMode.NONE -> PadMode.None
-        AnalogMode.MOUSE -> PadMode.Mouse(sensitivity = DEFAULT_PAD_MOUSE_SENS * sensitivityPct / 100f, invertY = invertY)
+        AnalogMode.MOUSE -> PadMode.Mouse(sensitivity = DEFAULT_PAD_MOUSE_SENS * sensitivityPct / 100f, invertY = invertY,
+            rotation = mouseRotation, horizScale = mouseHorizScale, vertScale = mouseVertScale)
         AnalogMode.SCROLL_WHEEL -> PadMode.ScrollWheel(step = scrollStep, invertY = invertY)
         AnalogMode.DPAD -> PadMode.DPad(up.toOutput(), down.toOutput(), left.toOutput(), right.toOutput(), deadzone = deadzonePct / 100f,
             layout = runCatching { DpadLayout.valueOf(dpadLayout) }.getOrDefault(DpadLayout.EIGHT_WAY), overlap = dpadOverlap)
@@ -298,7 +303,8 @@ data class EditAnalog(
          *  (menus / button-pad) — null means "inherit / leave as-is", so saving won't clobber it. */
         fun fromPad(m: PadMode): EditAnalog? = when (m) {
             is PadMode.None -> EditAnalog(AnalogMode.NONE)
-            is PadMode.Mouse -> EditAnalog(AnalogMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_PAD_MOUSE_SENS * 100f).roundToInt(), invertY = m.invertY)
+            is PadMode.Mouse -> EditAnalog(AnalogMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_PAD_MOUSE_SENS * 100f).roundToInt(), invertY = m.invertY,
+                mouseRotation = m.rotation, mouseHorizScale = m.horizScale, mouseVertScale = m.vertScale)
             // Absolute/region mouse, single-button, directional-swipe aren't authored in the editor yet → null =
             // inherit (preserved losslessly on edit; importer handles them).
             is PadMode.AbsoluteMouse -> null

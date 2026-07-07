@@ -549,7 +549,11 @@ object SteamControllerProfileImporter {
         extractInput(group, "click")?.let { buttons[clickBit] = it }
         extractInput(group, "touch")?.let { buttons[touchBit] = it } // surface-touch binding (fires on capacitive touch)
         val s = group.getObject("settings")
-        fun mouse() = PadMode.Mouse(sensitivity = (1.0f / 70f) * readSensScale(s), invertY = readInvertY(s, default = true))
+        fun mouse() = PadMode.Mouse(
+            sensitivity = (1.0f / 70f) * readSensScale(s), invertY = readInvertY(s, default = true),
+            rotation = s?.getString("rotation")?.toFloatOrNull() ?: 0f,
+            horizScale = readPctScale(s, "sensitivity_horiz_scale"), vertScale = readPctScale(s, "sensitivity_vert_scale"),
+        )
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
             "dpad" -> PadMode.DPad(
                 up = dirOut(group, "dpad_north"), down = dirOut(group, "dpad_south"),
@@ -748,6 +752,10 @@ object SteamControllerProfileImporter {
     }
 
     // ---- per-group tunable settings -> existing model fields (the common ones; the long tail is step 3/7) ----
+
+    /** A percent-scale setting ([key], %/100; def 100 → 1.0). Used for per-axis H/V output scale. */
+    private fun readPctScale(s: VdfObject?, key: String): Float =
+        (s?.getString(key)?.toFloatOrNull() ?: 100f) / 100f
 
     /** D-pad `layout` (0=8-way / 1=4-way / 2=analog-emu / 3=cross-gate); absent → 8-way. */
     private fun readDpadLayout(s: VdfObject?): DpadLayout =

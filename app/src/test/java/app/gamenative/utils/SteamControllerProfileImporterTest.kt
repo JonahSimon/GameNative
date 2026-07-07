@@ -93,6 +93,20 @@ class SteamControllerProfileImporterTest {
     }
 
     @Test
+    fun `relative mouse pad decodes rotation and H-V scale`() {
+        val vdf = """
+            "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "mouse" "inputs" {}
+                "settings" { "rotation" "8" "sensitivity_vert_scale" "89" "sensitivity_horiz_scale" "150" } }
+              "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "left_trackpad active" } } }
+        """.trimIndent()
+        val m = SteamControllerProfileImporter.importConfig(vdf).defaultProfile().leftPad as PadMode.Mouse
+        assertEquals(8f, m.rotation, 1e-4f)
+        assertEquals(0.89f, m.vertScale, 1e-4f)
+        assertEquals(1.5f, m.horizScale, 1e-4f)
+    }
+
+    @Test
     fun `stick response curve decodes from curve_exponent`() {
         fun stickWith(settings: String): StickMode {
             val vdf = """
