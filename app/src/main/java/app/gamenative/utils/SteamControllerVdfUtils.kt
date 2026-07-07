@@ -9,6 +9,7 @@ import app.gamenative.steamcontroller.LayerOpType
 import app.gamenative.steamcontroller.MacroCommand
 import app.gamenative.steamcontroller.MenuSlot
 import app.gamenative.steamcontroller.PadMode
+import app.gamenative.steamcontroller.ResponseCurve
 import app.gamenative.steamcontroller.ScConfig
 import app.gamenative.steamcontroller.ScOutput
 import app.gamenative.steamcontroller.ScProfile
@@ -514,13 +515,11 @@ object SteamControllerProfileImporter {
             stick,
             invertY = readInvertY(s, default = true),
             deadzone = readDeadzone(s, default = 0.12f),
+            curve = readCurve(s),
         )
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
             "joystick_move" -> joystick()
-            "joystick_camera" -> {
-                Timber.tag(TAG).d("stick mode 'joystick_camera' -> approximating as JoystickMove (curve TODO)")
-                joystick()
-            }
+            "joystick_camera" -> joystick() // camera-vs-move differ only by feel here; response curve now carried
             // Stick→mouse. `joystick_mouse` is the stick name, `mouse_joystick` the pad name — accept both here so a
             // shared/`reference`d group that carries the pad name on a stick source still maps (never silently drops).
             "joystick_mouse", "mouse_joystick" -> StickMode.Mouse(
@@ -757,6 +756,22 @@ object SteamControllerProfileImporter {
     /** D-pad `overlap_region` (raw 2000..16000 on the 32768 scale; def 4000) → normalized 0..1 dead-diagonal band. */
     private fun readOverlap(s: VdfObject?): Float =
         (s?.getString("overlap_region")?.toIntOrNull() ?: 4000) / 32768f
+
+    /** Response curve from Steam `curve_exponent` (preset ordinal) or `custom_curve_exponent` (25..375, 200≈linear).
+     *  ponytail: the preset int->curve map is inferred from Steam's UI order (Linear/Aggressive/Relaxed/Wide/ExtraWide)
+     *  matching our enum ordinal — confirm against a UI capture if a curve feels off; the custom slider is bucketed. */
+    private fun readCurve(s: VdfObject?): ResponseCurve {
+        s?.getString("curve_exponent")?.toIntOrNull()?.let {
+            return ResponseCurve.values().getOrElse(it) { ResponseCurve.LINEAR }
+        }
+        val custom = s?.getString("custom_curve_exponent")?.toIntOrNull() ?: return ResponseCurve.LINEAR
+        return when { // 200 = linear; lower = steeper (aggressive), higher = flatter (relaxed/wide)
+            custom < 150 -> ResponseCurve.AGGRESSIVE
+            custom <= 250 -> ResponseCurve.LINEAR
+            custom <= 320 -> ResponseCurve.RELAXED
+            else -> ResponseCurve.WIDE
+        }
+    }
 
     /** Steam inner dead zone is raw 0..32768; our `deadzone` is 0..1. Falls back to [default] when unset. */
     private fun readDeadzone(settings: VdfObject?, default: Float): Float {

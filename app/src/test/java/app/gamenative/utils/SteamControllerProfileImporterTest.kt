@@ -6,6 +6,7 @@ import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
 import app.gamenative.steamcontroller.PadMode
+import app.gamenative.steamcontroller.ResponseCurve
 import app.gamenative.steamcontroller.ScOutput
 import app.gamenative.steamcontroller.Stick
 import app.gamenative.steamcontroller.StickMode
@@ -89,6 +90,23 @@ class SteamControllerProfileImporterTest {
         assertEquals(ScOutput.Key(listOf(XKeycode.KEY_A)), d.left)
         assertEquals(ScOutput.Key(listOf(XKeycode.KEY_D)), d.right)
         assertEquals(DpadLayout.EIGHT_WAY, d.layout) // no `layout` setting -> 8-way default
+    }
+
+    @Test
+    fun `stick response curve decodes from curve_exponent`() {
+        fun stickWith(settings: String): StickMode {
+            val vdf = """
+                "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+                  "group" { "id" "0" "mode" "joystick_move" "inputs" {} "settings" { $settings } }
+                  "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "joystick active" } } }
+            """.trimIndent()
+            return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().leftStick
+        }
+        // curve_exponent ordinal aligns with ResponseCurve (0=LINEAR,1=AGGRESSIVE,2=RELAXED,...).
+        assertEquals(ResponseCurve.RELAXED, (stickWith(""" "curve_exponent" "2" """) as StickMode.JoystickMove).curve)
+        assertEquals(ResponseCurve.LINEAR, (stickWith("") as StickMode.JoystickMove).curve) // absent -> linear
+        // custom slider: 200 ~ linear, low ~ aggressive.
+        assertEquals(ResponseCurve.AGGRESSIVE, (stickWith(""" "custom_curve_exponent" "100" """) as StickMode.JoystickMove).curve)
     }
 
     @Test
