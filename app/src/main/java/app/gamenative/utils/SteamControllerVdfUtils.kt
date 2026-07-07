@@ -570,6 +570,7 @@ object SteamControllerProfileImporter {
                     centerX = pct("position_x", 50f), centerY = pct("position_y", 50f),
                     sizeX = scale * pct("scale_x", 100f), sizeY = scale * pct("scale_y", 100f),
                     invertX = s?.getString("invert_x") == "1", invertY = s?.getString("invert_y") == "1",
+                    rotation = s?.getString("rotation")?.toFloatOrNull() ?: 0f,
                 )
             }
             // Single-button pad (whole surface = one button). The vdf binds it on the "click" input; importPad

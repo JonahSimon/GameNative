@@ -340,6 +340,8 @@ sealed class PadMode {
         /** Region SIZE as a screen fraction (Steam `scale` %/100 × `scale_x/y` %/100; full screen = 1.0). */
         val sizeX: Float = 1f, val sizeY: Float = 1f,
         val invertX: Boolean = false, val invertY: Boolean = false,
+        /** Rotate Output (Steam `rotation`, −180..180°): rotates the region-relative position vector before mapping. */
+        val rotation: Float = 0f,
     ) : PadMode()
     /**
      * Mouse Joystick (Steam pad `mouse_joystick`): the pad acts like a self-centering joystick that drives the

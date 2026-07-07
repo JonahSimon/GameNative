@@ -50,6 +50,16 @@ class PadModesTest {
     }
 
     @Test
+    fun `absolute mouse rotate output rotates the position vector`() {
+        val sink = RecordingSink()
+        // Full screen, rotated 90°: a finger at the right edge maps to bottom-center (right offset -> down offset).
+        val interp = ProfileInterpreter(sink, ScProfile(leftPad = PadMode.AbsoluteMouse(rotation = 90f)), haptics = null)
+        interp.apply(leftPadState(touch = true, x = 32767, y = 0)) // far right, vertical center
+        assertEquals(0.5f, sink.lastAbsX, 0.02f)
+        assertEquals(1.0f, sink.lastAbsY, 0.02f)
+    }
+
+    @Test
     fun `mouse position warps the cursor on button press`() {
         val sink = RecordingSink()
         val prof = ScProfile(buttons = mapOf(TritonProtocol.BTN_A to Binding(ScOutput.MousePosition(0.5f, 0.25f))))

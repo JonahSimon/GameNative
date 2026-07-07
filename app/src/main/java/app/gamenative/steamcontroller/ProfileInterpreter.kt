@@ -896,9 +896,18 @@ class ProfileInterpreter(
         val pyUp = (y / 65536f + 0.5f).coerceIn(0f, 1f)      // 0 = bottom, 1 = top (pad reports +Y up)
         val fx = if (mode.invertX) 1f - px else px
         val fyTop = if (mode.invertY) pyUp else 1f - pyUp    // 0 = screen top
+        // Region-relative offset from center (−0.5..0.5), optionally rotated (Rotate Output), then scaled onto the region.
+        var ox = fx - 0.5f
+        var oy = fyTop - 0.5f
+        if (mode.rotation != 0f) {
+            val r = Math.toRadians(mode.rotation.toDouble())
+            val c = kotlin.math.cos(r).toFloat(); val sn = kotlin.math.sin(r).toFloat()
+            val rx = ox * c - oy * sn; val ry = ox * sn + oy * c
+            ox = rx; oy = ry
+        }
         // Map the pad extent onto the region centered at (centerX,centerY) spanning sizeX/sizeY of the screen.
-        val nx = mode.centerX + (fx - 0.5f) * mode.sizeX
-        val ny = mode.centerY + (fyTop - 0.5f) * mode.sizeY
+        val nx = mode.centerX + ox * mode.sizeX
+        val ny = mode.centerY + oy * mode.sizeY
         sink.mouseMoveAbs(nx.coerceIn(0f, 1f), ny.coerceIn(0f, 1f))
     }
 
