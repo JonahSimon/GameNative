@@ -384,16 +384,35 @@ data class MenuSlot(val binding: Binding, val label: String = "")
 sealed class GyroMode {
     object None : GyroMode()
     /** Gyro rate -> mouse aim delta, gated by [gate] (e.g. only while a grip is held). [activation] = what the gate
-     *  button DOES (hold-to-enable / hold-to-suppress / press-to-toggle). */
-    data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false, val activation: GyroActivation = GyroActivation.ENABLE) : GyroMode()
+     *  button DOES (hold-to-enable / hold-to-suppress / press-to-toggle). Feel set (all in RAW gyro-rate units, tuned
+     *  on-device): [speedDeadzone] = rotation speed below which there's no output (kills hand shake); [precisionSpeed]
+     *  = below this speed sensitivity scales down proportionally (fine aim); [accel] scales sensitivity UP with speed
+     *  (fast flicks turn further); [hvMixer] −1..+1 rebalances horizontal vs vertical (>0 reduces horizontal, <0
+     *  reduces vertical, 0 = 1:1). */
+    data class Mouse(
+        val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP,
+        val invertX: Boolean = false, val invertY: Boolean = false,
+        val activation: GyroActivation = GyroActivation.ENABLE,
+        val speedDeadzone: Float = 0f, val precisionSpeed: Float = 0f,
+        val accel: GyroAccel = GyroAccel.OFF, val hvMixer: Float = 0f,
+    ) : GyroMode()
     /** Gyro -> virtual XInput stick. Two Steam styles, distinguished by [deflection]:
      *  - **camera** (`gyro_to_joystick_camera`, [deflection]=false): gyro *rate* → stick deflection (fast spin =
      *    far push, stops at rest — velocity-like aim for stick-look games). Yaw→X, pitch→Y.
      *  - **deflection** (`gyro_to_joystick_deflection`, [deflection]=true): gyro *angle* (integrated while gated) →
      *    *held* stick position — tilt to an angle and the stick stays there until you rotate back. The accumulated
      *    angle resets to center when the gate closes (ratchet), so integration drift can't build up.
-     *  Both scaled by [sensitivity], gated by [gate], output to [stick]. [activation] = what the gate button DOES. */
-    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false, val deflection: Boolean = false, val activation: GyroActivation = GyroActivation.ENABLE) : GyroMode()
+     *  Both scaled by [sensitivity], gated by [gate], output to [stick]. [activation] = what the gate button DOES.
+     *  Output shaping (Steam camera/deflection settings): [powerCurve] (0.1 aggressive … 1 linear … 4 relaxed) shapes
+     *  the stick magnitude; [outputMin]/[outputMax] (0..1) rescale the output range; [lockAtEdges] clamps the combined
+     *  magnitude to [outputMax] (else axes reach it independently → diagonal overshoot).
+     *  (Lean Left/Right roll-axis binds are deferred — need a real bound export for the vdf input name + editor UI.) */
+    data class Joystick(
+        val stick: Stick = Stick.RIGHT, val sensitivity: Float,
+        val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false,
+        val deflection: Boolean = false, val activation: GyroActivation = GyroActivation.ENABLE,
+        val powerCurve: Float = 1f, val outputMin: Float = 0f, val outputMax: Float = 1f, val lockAtEdges: Boolean = false,
+    ) : GyroMode()
 }
 
 /** When a gyro mode is active. Grips are the rear paddles; the pad/stick-touch gates enable "touch-to-aim" (gyro
@@ -417,6 +436,11 @@ enum class GyroGate {
  *  - [TOGGLE]: each gate *press* flips gyro on/off (hands-free aim + easy ratcheting — toggle off, recenter, toggle on).
  *  With gate = [GyroGate.ALWAYS] there is no button, so [activation] is moot (gyro is simply always on). */
 enum class GyroActivation { ENABLE, SUPPRESS, TOGGLE }
+
+/** Gyro output acceleration (Steam Acceleration: Off / Linear / Relaxed / Aggressive) — scales sensitivity UP with
+ *  rotation speed so quick flicks turn further. [gain] is applied as `1 + gain * (speed / ACCEL_REF)` (clamped),
+ *  ACCEL_REF being a raw-speed reference tuned on-device. */
+enum class GyroAccel(val gain: Float) { OFF(0f), LINEAR(1f), RELAXED(0.5f), AGGRESSIVE(2f) }
 
 /**
  * Trackpad/haptic feel parameters — profile-driven so the binding-editor UI can expose full haptics control

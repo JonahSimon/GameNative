@@ -3,6 +3,7 @@ package app.gamenative.utils
 import app.gamenative.steamcontroller.Activator
 import app.gamenative.steamcontroller.Binding
 import app.gamenative.steamcontroller.DpadLayout
+import app.gamenative.steamcontroller.GyroAccel
 import app.gamenative.steamcontroller.GyroActivation
 import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
@@ -725,15 +726,23 @@ object SteamControllerProfileImporter {
         val activation = readGyroActivation(s)
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
             "gyro_to_mouse", "mouse", "absolute_mouse", "mouse_region" ->
-                GyroMode.Mouse((1.0f / 900f) * readSensScale(s), gate, activation = activation)
+                GyroMode.Mouse(
+                    (1.0f / 900f) * readSensScale(s), gate, activation = activation,
+                    speedDeadzone = s?.getString("gyro_speed_deadzone")?.toFloatOrNull() ?: 0f,   // raw units
+                    precisionSpeed = s?.getString("gyro_precision_speed")?.toFloatOrNull() ?: 0f,  // raw units
+                    accel = readGyroAccel(s), hvMixer = readGyroMixer(s),
+                )
             "gyro_to_joystick", "gyro_to_joystick_camera", "gyro_to_joystick_deflection" -> {
                 // Deflection integrates gyro angle each frame (held position), so its base scale is ~10× smaller than
                 // camera's per-frame rate→deflection to land in the same feel range. Both feel-tuned on-device.
                 val deflection = mode == "gyro_to_joystick_deflection"
+                // Steam `gyro_to_joystick_power_curve` is the exponent ×100 (400 = 4.0 relaxed; def 100 = 1.0 linear).
+                val powerCurve = (s?.getString("gyro_to_joystick_power_curve")?.toFloatOrNull()?.div(100f) ?: 1f)
+                    .coerceIn(0.1f, 4f)
                 GyroMode.Joystick(
                     stick = if (s?.getString("output_joystick") == "1") Stick.LEFT else Stick.RIGHT,
                     sensitivity = (if (deflection) 1.0f / 60000f else 1.0f / 6000f) * readSensScale(s),
-                    gate = gate, deflection = deflection, activation = activation,
+                    gate = gate, deflection = deflection, activation = activation, powerCurve = powerCurve,
                 )
             }
             "", "disabled" -> GyroMode.None
@@ -751,6 +760,22 @@ object SteamControllerProfileImporter {
     private fun gyroGate(s: VdfObject?): GyroGate {
         val mask = s?.getString("gyro_ratchet_button_mask")?.toLongOrNull() ?: 0L
         return if (mask != 0L && (mask and GYRO_TOUCH_MASK) != 0L) GyroGate.ANY_TOUCH else GyroGate.EITHER_GRIP
+    }
+
+    /** Steam Acceleration (`acceleration` 0..3 = Off/Linear/Relaxed/Aggressive; UI order). ponytail: order inferred
+     *  from the UI; confirm against a labeled export if a curve feels off. */
+    private fun readGyroAccel(s: VdfObject?): GyroAccel = when (s?.getString("acceleration")?.toIntOrNull()) {
+        1 -> GyroAccel.LINEAR
+        2 -> GyroAccel.RELAXED
+        3 -> GyroAccel.AGGRESSIVE
+        else -> GyroAccel.OFF
+    }
+
+    /** H/V Output Mixer from Steam `gyro_vertical_horizontal_ratio` (a vertical:horizontal ratio ×100, def 100 = 1:1)
+     *  → our −1..+1 mixer (>0 reduces horizontal, <0 reduces vertical). ponytail: exact scale tuned on-device. */
+    private fun readGyroMixer(s: VdfObject?): Float {
+        val ratio = (s?.getString("gyro_vertical_horizontal_ratio")?.toFloatOrNull() ?: 100f) / 100f
+        return if (ratio >= 1f) (1f - 1f / ratio) else -(1f - ratio)
     }
 
     /** Gyro Enable/Suppress/Toggle mode. CONFIRMED from labeled Steam exports (testGyroEnable/Suppress/Toggle, controlled

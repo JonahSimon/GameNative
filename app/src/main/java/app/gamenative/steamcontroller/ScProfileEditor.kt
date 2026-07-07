@@ -412,16 +412,33 @@ data class EditGyro(
     val deflection: Boolean = false,
     /** GyroActivation name (ENABLE / SUPPRESS / TOGGLE) — what the gate button does. */
     val activation: String = "ENABLE",
+    /** MOUSE feel set: speed deadzone + precision speed (raw gyro units), acceleration curve, H/V mixer (−100..100%). */
+    val speedDeadzone: Int = 0,
+    val precisionSpeed: Int = 0,
+    val accel: String = "OFF",
+    val hvMixerPct: Int = 0,
+    /** JOYSTICK shaping: power curve (×100 → 0.1..4), output range (%), lock at edges. */
+    val powerCurvePct: Int = 100,
+    val outputMinPct: Int = 0,
+    val outputMaxPct: Int = 100,
+    val lockAtEdges: Boolean = false,
 ) {
     private fun gateEnum() = runCatching { GyroGate.valueOf(gate) }.getOrDefault(GyroGate.EITHER_GRIP)
     private fun activationEnum() = runCatching { GyroActivation.valueOf(activation) }.getOrDefault(GyroActivation.ENABLE)
+    private fun accelEnum() = runCatching { GyroAccel.valueOf(accel) }.getOrDefault(GyroAccel.OFF)
     fun toRuntime(): GyroMode = when (mode) {
         GyroEditMode.OFF -> GyroMode.None
-        GyroEditMode.MOUSE -> GyroMode.Mouse(sensitivity = DEFAULT_GYRO_SENS * sensitivityPct / 100f, gate = gateEnum(), activation = activationEnum())
+        GyroEditMode.MOUSE -> GyroMode.Mouse(
+            sensitivity = DEFAULT_GYRO_SENS * sensitivityPct / 100f, gate = gateEnum(), activation = activationEnum(),
+            speedDeadzone = speedDeadzone.toFloat(), precisionSpeed = precisionSpeed.toFloat(),
+            accel = accelEnum(), hvMixer = hvMixerPct / 100f,
+        )
         GyroEditMode.JOYSTICK -> GyroMode.Joystick(
             stick = runCatching { Stick.valueOf(outputStick) }.getOrDefault(Stick.RIGHT),
             sensitivity = (if (deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * sensitivityPct / 100f,
             gate = gateEnum(), deflection = deflection, activation = activationEnum(),
+            powerCurve = (powerCurvePct / 100f).coerceIn(0.1f, 4f), outputMin = outputMinPct / 100f,
+            outputMax = outputMaxPct / 100f, lockAtEdges = lockAtEdges,
         )
     }
 
@@ -430,9 +447,11 @@ data class EditGyro(
         const val DEFAULT_GYRO_JOY_SENS = 1f / 6000f // camera: gyro rate → stick deflection
         const val DEFAULT_GYRO_DEFLECT_SENS = 1f / 60000f // deflection: integrated angle → held position
         fun from(m: GyroMode): EditGyro = when (m) {
-            is GyroMode.Joystick -> EditGyro(GyroEditMode.JOYSTICK, sensitivityPct = (m.sensitivity / (if (m.deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * 100f).roundToInt(), gate = m.gate.name, outputStick = m.stick.name, deflection = m.deflection, activation = m.activation.name)
+            is GyroMode.Joystick -> EditGyro(GyroEditMode.JOYSTICK, sensitivityPct = (m.sensitivity / (if (m.deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * 100f).roundToInt(), gate = m.gate.name, outputStick = m.stick.name, deflection = m.deflection, activation = m.activation.name,
+                powerCurvePct = (m.powerCurve * 100f).roundToInt(), outputMinPct = (m.outputMin * 100f).roundToInt(), outputMaxPct = (m.outputMax * 100f).roundToInt(), lockAtEdges = m.lockAtEdges)
             is GyroMode.None -> EditGyro(GyroEditMode.OFF)
-            is GyroMode.Mouse -> EditGyro(GyroEditMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_SENS * 100f).roundToInt(), gate = m.gate.name, activation = m.activation.name)
+            is GyroMode.Mouse -> EditGyro(GyroEditMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_SENS * 100f).roundToInt(), gate = m.gate.name, activation = m.activation.name,
+                speedDeadzone = m.speedDeadzone.roundToInt(), precisionSpeed = m.precisionSpeed.roundToInt(), accel = m.accel.name, hvMixerPct = (m.hvMixer * 100f).roundToInt())
         }
     }
 }

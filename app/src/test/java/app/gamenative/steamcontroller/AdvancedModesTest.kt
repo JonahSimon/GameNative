@@ -34,6 +34,23 @@ class AdvancedModesTest {
     }
 
     @Test
+    fun `gyro joystick power curve and output range shape the deflection`() {
+        // Aggressive curve (0.5) raises a mid-range input; capped output max reduces the peak.
+        fun peak(mode: GyroMode.Joystick): Float {
+            val sink = RecordingSink()
+            ProfileInterpreter(sink, ScProfile(gyro = mode), haptics = null).apply(TritonState().apply { gyroZ = 4000 })
+            return kotlin.math.abs(sink.minThumbRX)
+        }
+        val linear = GyroMode.Joystick(Stick.RIGHT, sensitivity = 0.0001f, gate = GyroGate.ALWAYS) // small -> mid deflection
+        val relaxed = peak(linear.copy(powerCurve = 4f))   // 4 = relaxed -> smaller at mid input
+        val lin = peak(linear)
+        assertTrue("relaxed curve reduces mid-range deflection", relaxed < lin)
+        // Output max caps the magnitude.
+        val capped = peak(GyroMode.Joystick(Stick.RIGHT, sensitivity = 1f, gate = GyroGate.ALWAYS, outputMax = 0.5f))
+        assertTrue("output max caps deflection at ~0.5", capped <= 0.51f)
+    }
+
+    @Test
     fun `gyro camera style returns to center when rotation stops`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Joystick(Stick.RIGHT, sensitivity = 0.001f, gate = GyroGate.ALWAYS, deflection = false)), haptics = null)
@@ -69,6 +86,38 @@ class AdvancedModesTest {
         interp.apply(grip)   // press edge -> toggle OFF
         interp.apply(noGrip)
         assertEquals("no aim after toggle off", b, sink.mouseMoves)
+    }
+
+    private fun gyroDx(mode: GyroMode.Mouse, gz: Int, gx: Int = 0): Long {
+        val sink = RecordingSink()
+        ProfileInterpreter(sink, ScProfile(gyro = mode), haptics = null).apply(TritonState().apply { gyroZ = gz; gyroX = gx })
+        return sink.mouseDx
+    }
+
+    @Test
+    fun `gyro mouse H-V mixer rebalances the horizontal axis`() {
+        val base = GyroMode.Mouse(sensitivity = 1f, gate = GyroGate.ALWAYS)
+        val full = kotlin.math.abs(gyroDx(base, 1000))
+        val mixed = kotlin.math.abs(gyroDx(base.copy(hvMixer = 0.5f), 1000)) // >0 reduces horizontal
+        assertEquals("horizontal halved by +0.5 mixer", full / 2, mixed)
+    }
+
+    @Test
+    fun `gyro speed deadzone and precision scale slow rotation`() {
+        val base = GyroMode.Mouse(sensitivity = 1f, gate = GyroGate.ALWAYS)
+        // Speed deadzone: below the threshold speed -> no output.
+        assertEquals(0L, gyroDx(base.copy(speedDeadzone = 2000f), 1000))
+        assertTrue("above deadzone aims", kotlin.math.abs(gyroDx(base.copy(speedDeadzone = 2000f), 3000)) > 0)
+        // Precision: below precisionSpeed, sensitivity scales down proportionally (1000/2000 = half).
+        assertEquals(kotlin.math.abs(gyroDx(base, 1000)) / 2, kotlin.math.abs(gyroDx(base.copy(precisionSpeed = 2000f), 1000)))
+    }
+
+    @Test
+    fun `gyro acceleration increases sensitivity at high speed`() {
+        val base = GyroMode.Mouse(sensitivity = 1f, gate = GyroGate.ALWAYS)
+        val off = kotlin.math.abs(gyroDx(base, 8000))
+        val agg = kotlin.math.abs(gyroDx(base.copy(accel = GyroAccel.AGGRESSIVE), 8000))
+        assertTrue("aggressive accel turns further at speed", agg > off)
     }
 
     @Test

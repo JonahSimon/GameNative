@@ -549,6 +549,15 @@ private fun GyroPickerDialog(current: EditGyro, onDismiss: () -> Unit, onApply: 
     var sens by remember { mutableIntStateOf(current.sensitivityPct) }
     var gate by remember { mutableStateOf(current.gate) }
     var activation by remember { mutableStateOf(current.activation) }
+    var accel by remember { mutableStateOf(current.accel) }
+    var mixer by remember { mutableIntStateOf(current.hvMixerPct) }
+    var speedDz by remember { mutableIntStateOf(current.speedDeadzone) }
+    var precision by remember { mutableIntStateOf(current.precisionSpeed) }
+    var deflection by remember { mutableStateOf(current.deflection) }
+    var outStick by remember { mutableStateOf(current.outputStick) }
+    var powerCurve by remember { mutableIntStateOf(current.powerCurvePct) }
+    var outMax by remember { mutableIntStateOf(current.outputMaxPct) }
+    var lockEdges by remember { mutableStateOf(current.lockAtEdges) }
     val mode = runCatching { GyroEditMode.valueOf(modeKey) }.getOrNull()
     val nav = remember { ScNavState() }
 
@@ -558,7 +567,12 @@ private fun GyroPickerDialog(current: EditGyro, onDismiss: () -> Unit, onApply: 
         text = {
             val doApply = {
                 if (modeKey == inherit) onApply(null)
-                else onApply(current.copy(mode = mode ?: GyroEditMode.MOUSE, sensitivityPct = sens, gate = gate, activation = activation))
+                else onApply(current.copy(
+                    mode = mode ?: GyroEditMode.MOUSE, sensitivityPct = sens, gate = gate, activation = activation,
+                    accel = accel, hvMixerPct = mixer, speedDeadzone = speedDz, precisionSpeed = precision,
+                    deflection = deflection, outputStick = outStick, powerCurvePct = powerCurve,
+                    outputMaxPct = outMax, lockAtEdges = lockEdges,
+                ))
             }
             ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
                 LabeledDropdown("Behavior", modeOptions, modeKey, nav = nav, navLine = 0) { modeKey = it }
@@ -592,6 +606,36 @@ private fun GyroPickerDialog(current: EditGyro, onDismiss: () -> Unit, onApply: 
                         ),
                         gate, nav = nav, navLine = 3,
                     ) { gate = it }
+                }
+                // Gyro-joystick shaping — joystick only.
+                if (mode == GyroEditMode.JOYSTICK) {
+                    Spacer(Modifier.height(8.dp))
+                    LabeledDropdown("Style", listOf("false" to "Camera (rate → turn)", "true" to "Deflection (angle → hold)"),
+                        deflection.toString(), nav = nav, navLine = 4) { deflection = it.toBoolean() }
+                    Spacer(Modifier.height(8.dp))
+                    LabeledDropdown("Output stick", listOf("RIGHT" to "Right stick", "LEFT" to "Left stick"),
+                        outStick, nav = nav, navLine = 5) { outStick = it }
+                    Spacer(Modifier.height(8.dp))
+                    AnalogSlider("Power curve ×100", powerCurve, 10, 400, "", nav = nav, navLine = 6) { powerCurve = it }
+                    Spacer(Modifier.height(8.dp))
+                    AnalogSlider("Max output", outMax, 10, 100, "%", nav = nav, navLine = 7) { outMax = it }
+                    Spacer(Modifier.height(8.dp))
+                    AnalogToggle("Lock at edges", lockEdges, nav = nav, navLine = 8) { lockEdges = it }
+                }
+                // Gyro-mouse feel set (aim tuning) — mouse only.
+                if (mode == GyroEditMode.MOUSE) {
+                    Spacer(Modifier.height(8.dp))
+                    LabeledDropdown(
+                        "Acceleration",
+                        listOf("OFF" to "Off", "LINEAR" to "Linear", "RELAXED" to "Relaxed", "AGGRESSIVE" to "Aggressive"),
+                        accel, nav = nav, navLine = 4,
+                    ) { accel = it }
+                    Spacer(Modifier.height(8.dp))
+                    AnalogSlider("H/V mixer", mixer, -100, 100, "%", nav = nav, navLine = 5) { mixer = it }
+                    Spacer(Modifier.height(8.dp))
+                    AnalogSlider("Speed deadzone", speedDz, 0, 3000, "", nav = nav, navLine = 6) { speedDz = it }
+                    Spacer(Modifier.height(8.dp))
+                    AnalogSlider("Precision speed", precision, 0, 8000, "", nav = nav, navLine = 7) { precision = it }
                 }
                 NavApplyCancelRow(nav, onApply = doApply, onCancel = onDismiss)
             }

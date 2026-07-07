@@ -301,6 +301,16 @@ class SteamControllerProfileImporterTest {
         assertEquals(true, (gyroFor("gyro_to_joystick_deflection") as GyroMode.Joystick).deflection)
     }
 
+    @Test
+    fun `gyro joystick power curve decodes from the exponent x100`() {
+        val vdf = """
+            "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "gyro_to_joystick_camera" "inputs" {} "settings" { "gyro_to_joystick_power_curve" "400" } }
+              "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "gyro active" } } }
+        """.trimIndent()
+        assertEquals(4f, (SteamControllerProfileImporter.importConfig(vdf).defaultProfile().gyro as GyroMode.Joystick).powerCurve, 1e-4f)
+    }
+
     private fun padWithMode(mode: String): PadMode {
         val vdf = """
             "controller_mappings" { "version" "3" "controller_type" "controller_triton"

@@ -108,6 +108,8 @@ class ProfileInterpreter(
         const val NAV_CURSOR_FLOOR = 80f
         const val NAV_CURSOR_GAIN = 0.06f
         const val NAV_CURSOR_TICK_PX = 36f
+        /** Raw gyro rotation-speed reference at which acceleration reaches full [GyroAccel.gain]. Tuned on-device. */
+        const val GYRO_ACCEL_REF = 8000f
         /** Held-d-pad menu nav auto-repeat: initial delay, then per-step interval (ms). */
         const val NAV_REPEAT_DELAY_MS = 400L
         const val NAV_REPEAT_INTERVAL_MS = 130L
@@ -1090,6 +1092,16 @@ class ProfileInterpreter(
         }
     }
 
+    /** Shape a raw joystick axis value in [-1,1]: power curve on the magnitude (0.1 aggressive … 1 linear … 4 relaxed),
+     *  then rescale into [GyroMode.Joystick.outputMin]..[outputMax]. Sign preserved. */
+    private fun shapeJoy(v: Float, mode: GyroMode.Joystick): Float {
+        if (v == 0f) return 0f
+        var t = abs(v).coerceIn(0f, 1f)
+        if (mode.powerCurve != 1f) t = Math.pow(t.toDouble(), mode.powerCurve.toDouble()).toFloat()
+        val out = mode.outputMin + t * (mode.outputMax - mode.outputMin)
+        return if (v < 0) -out else out
+    }
+
     private fun applyGyro(mode: GyroMode, s: TritonState) {
         when (mode) {
             is GyroMode.Mouse -> {
@@ -1098,9 +1110,21 @@ class ProfileInterpreter(
                     // backwards on device). invertX/invertY flip each axis back.
                     val sx = if (mode.invertX) 1f else -1f
                     val sy = if (mode.invertY) 1f else -1f
-                    val dx = (sx * s.gyroZ * mode.sensitivity).toInt()   // yaw
-                    val dy = (sy * s.gyroX * mode.sensitivity).toInt()   // pitch
-                    if (dx != 0 || dy != 0) sink.mouseMove(dx, dy)
+                    val gz = s.gyroZ.toFloat(); val gx = s.gyroX.toFloat()
+                    val speed = hypot(gx, gz)                                   // rotation speed (raw units)
+                    if (mode.speedDeadzone <= 0f || speed >= mode.speedDeadzone) { // below speed deadzone → no output
+                        var sens = mode.sensitivity
+                        // Precision: below precisionSpeed, scale sensitivity down proportionally (fine aim).
+                        if (mode.precisionSpeed > 0f && speed < mode.precisionSpeed) sens *= speed / mode.precisionSpeed
+                        // Acceleration: scale sensitivity UP with speed (fast flicks turn further).
+                        if (mode.accel.gain > 0f) sens *= 1f + mode.accel.gain * (speed / GYRO_ACCEL_REF).coerceIn(0f, 1f)
+                        // H/V mixer: >0 reduces horizontal, <0 reduces vertical (0 = 1:1).
+                        val hScale = if (mode.hvMixer > 0f) 1f - mode.hvMixer else 1f
+                        val vScale = if (mode.hvMixer < 0f) 1f + mode.hvMixer else 1f
+                        val dx = (sx * gz * sens * hScale).toInt()
+                        val dy = (sy * gx * sens * vScale).toInt()
+                        if (dx != 0 || dy != 0) sink.mouseMove(dx, dy)
+                    }
                 }
             }
             is GyroMode.Joystick -> {
@@ -1125,10 +1149,16 @@ class ProfileInterpreter(
                     x = (sx * s.gyroZ * mode.sensitivity).coerceIn(-1f, 1f)
                     y = (sy * s.gyroX * mode.sensitivity).coerceIn(-1f, 1f)
                 }
+                // Output shaping: power curve + output range per axis, then optional lock-at-edges magnitude clamp.
+                var ox = shapeJoy(x, mode); var oy = shapeJoy(y, mode)
+                if (mode.lockAtEdges) {
+                    val mag = hypot(ox, oy)
+                    if (mag > mode.outputMax && mag > 0f) { val k = mode.outputMax / mag; ox *= k; oy *= k }
+                }
                 if (mode.stick == Stick.LEFT) {
-                    gp.thumbLX = (gp.thumbLX + x).coerceIn(-1f, 1f); gp.thumbLY = (gp.thumbLY + y).coerceIn(-1f, 1f)
+                    gp.thumbLX = (gp.thumbLX + ox).coerceIn(-1f, 1f); gp.thumbLY = (gp.thumbLY + oy).coerceIn(-1f, 1f)
                 } else {
-                    gp.thumbRX = (gp.thumbRX + x).coerceIn(-1f, 1f); gp.thumbRY = (gp.thumbRY + y).coerceIn(-1f, 1f)
+                    gp.thumbRX = (gp.thumbRX + ox).coerceIn(-1f, 1f); gp.thumbRY = (gp.thumbRY + oy).coerceIn(-1f, 1f)
                 }
             }
             GyroMode.None -> {}
