@@ -72,6 +72,16 @@ class AdvancedModesTest {
     }
 
     @Test
+    fun `gyro gate can be any button (not just grips)`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.R4)), haptics = null)
+        interp.apply(TritonState().apply { gyroZ = 500 })                              // R4 not held -> no aim
+        assertEquals(0, sink.mouseMoves)
+        interp.apply(TritonState().apply { gyroZ = 500; buttons = TritonProtocol.BTN_R4 }) // R4 held -> aims
+        assertTrue("gyro aims while R4 paddle held", sink.mouseMoves > 0)
+    }
+
+    @Test
     fun `gyro suppress activation aims only while the grip is NOT held`() {
         val sink = RecordingSink()
         val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.RIGHT_GRIP, activation = GyroActivation.SUPPRESS)), haptics = null)

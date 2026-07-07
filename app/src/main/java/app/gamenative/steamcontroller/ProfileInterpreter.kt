@@ -1060,6 +1060,18 @@ class ProfileInterpreter(
             s.has(TritonProtocol.BTN_LSTICK_TOUCH) || s.has(TritonProtocol.BTN_RSTICK_TOUCH)
         GyroGate.ALL_TOUCH -> s.has(TritonProtocol.BTN_LPAD_TOUCH) && s.has(TritonProtocol.BTN_RPAD_TOUCH) &&
             s.has(TritonProtocol.BTN_LSTICK_TOUCH) && s.has(TritonProtocol.BTN_RSTICK_TOUCH)
+        GyroGate.L4 -> s.has(TritonProtocol.BTN_L4)
+        GyroGate.L5 -> s.has(TritonProtocol.BTN_L5)
+        GyroGate.R4 -> s.has(TritonProtocol.BTN_R4)
+        GyroGate.R5 -> s.has(TritonProtocol.BTN_R5)
+        GyroGate.LEFT_BUMPER -> s.has(TritonProtocol.BTN_LBUMPER)
+        GyroGate.RIGHT_BUMPER -> s.has(TritonProtocol.BTN_RBUMPER)
+        GyroGate.A -> s.has(TritonProtocol.BTN_A)
+        GyroGate.B -> s.has(TritonProtocol.BTN_B)
+        GyroGate.X -> s.has(TritonProtocol.BTN_X)
+        GyroGate.Y -> s.has(TritonProtocol.BTN_Y)
+        GyroGate.L3 -> s.has(TritonProtocol.BTN_L3)
+        GyroGate.R3 -> s.has(TritonProtocol.BTN_R3)
     }
 
     /** Whether the gyro is aiming this frame, combining the [gate] input with its [activation] behavior:

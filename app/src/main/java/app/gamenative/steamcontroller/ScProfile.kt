@@ -405,6 +405,10 @@ enum class GyroGate {
     ANY_TOUCH,
     /** Gyro active only while ALL four touch surfaces are touched at once (mask covering them, require-all). */
     ALL_TOUCH,
+    // Single-button gates — any button can gate the gyro, not just grips (the rear paddles + bumpers are the common
+    // picks; extend as needed). ponytail: single buttons only; arbitrary multi-button CHORDS need a mask-based gate
+    // (a `gateMask`/multi-select follow-up) — this covers the common "hold/toggle on <button>" case.
+    L4, L5, R4, R5, LEFT_BUMPER, RIGHT_BUMPER, A, B, X, Y, L3, R3;
 }
 
 /** What the gyro gate button(s) DO (Steam "Gyro Enable/Suppress/Toggle", vdf `gyro_button`):

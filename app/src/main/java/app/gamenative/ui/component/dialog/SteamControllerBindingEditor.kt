@@ -452,11 +452,15 @@ private fun summarizeTrigger(t: EditTrigger?): String = when (t?.mode) {
     TriggerEditMode.STAGED -> "Staged (soft/full)"
 }
 
-private fun summarizeGyro(g: EditGyro?): String = when (g?.mode) {
-    null -> "Inherit (default)"
-    GyroEditMode.OFF -> "Off"
-    GyroEditMode.MOUSE -> "Mouse (${g.gate.lowercase().replace('_', ' ')})"
-    GyroEditMode.JOYSTICK -> "Joystick (${g.outputStick.lowercase()}, ${g.gate.lowercase().replace('_', ' ')})"
+private fun summarizeGyro(g: EditGyro?): String {
+    fun g2(s: String) = s.lowercase().replace('_', ' ')
+    val act = g2(g?.activation ?: "ENABLE")
+    return when (g?.mode) {
+        null -> "Inherit (default)"
+        GyroEditMode.OFF -> "Off"
+        GyroEditMode.MOUSE -> "Mouse ($act, ${g2(g.gate)})"
+        GyroEditMode.JOYSTICK -> "Joystick (${g.outputStick.lowercase()}, $act, ${g2(g.gate)})"
+    }
 }
 
 private fun summarizeHaptics(h: EditHaptics?): String = when {
@@ -544,6 +548,7 @@ private fun GyroPickerDialog(current: EditGyro, onDismiss: () -> Unit, onApply: 
     var modeKey by remember { mutableStateOf(current.mode.name) }
     var sens by remember { mutableIntStateOf(current.sensitivityPct) }
     var gate by remember { mutableStateOf(current.gate) }
+    var activation by remember { mutableStateOf(current.activation) }
     val mode = runCatching { GyroEditMode.valueOf(modeKey) }.getOrNull()
     val nav = remember { ScNavState() }
 
@@ -553,22 +558,39 @@ private fun GyroPickerDialog(current: EditGyro, onDismiss: () -> Unit, onApply: 
         text = {
             val doApply = {
                 if (modeKey == inherit) onApply(null)
-                else onApply(current.copy(mode = mode ?: GyroEditMode.MOUSE, sensitivityPct = sens, gate = gate))
+                else onApply(current.copy(mode = mode ?: GyroEditMode.MOUSE, sensitivityPct = sens, gate = gate, activation = activation))
             }
             ScNavDialogColumn(nav, onBack = onDismiss, modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithBar()) {
                 LabeledDropdown("Behavior", modeOptions, modeKey, nav = nav, navLine = 0) { modeKey = it }
-                if (mode == GyroEditMode.MOUSE) {
+                // Sensitivity + gate + activation apply to BOTH mouse and joystick gyro.
+                if (mode == GyroEditMode.MOUSE || mode == GyroEditMode.JOYSTICK) {
                     Spacer(Modifier.height(8.dp))
                     AnalogSlider("Sensitivity", sens, 25, 400, "%", nav = nav, navLine = 1) { sens = it }
                     Spacer(Modifier.height(8.dp))
+                    // "Gyro Enable/Suppress/Toggle" — what the gate button DOES.
                     LabeledDropdown(
-                        "Active when",
+                        "Gyro mode",
                         listOf(
-                            "ALWAYS" to "Always on", "EITHER_GRIP" to "Either grip held",
-                            "LEFT_GRIP" to "Left grip held", "RIGHT_GRIP" to "Right grip held",
-                            "RIGHT_PAD_TOUCH" to "Right pad touched", "LEFT_PAD_TOUCH" to "Left pad touched",
+                            "ENABLE" to "Hold to enable gyro", "SUPPRESS" to "Hold to suppress gyro",
+                            "TOGGLE" to "Toggle gyro on/off",
                         ),
-                        gate, nav = nav, navLine = 2,
+                        activation, nav = nav, navLine = 2,
+                    ) { activation = it }
+                    Spacer(Modifier.height(8.dp))
+                    // "Choose Gyro Button(s)" — which button gates the gyro (any button, not just grips).
+                    LabeledDropdown(
+                        "Gyro button",
+                        listOf(
+                            "ALWAYS" to "Always on (no button)",
+                            "EITHER_GRIP" to "Either grip", "LEFT_GRIP" to "Left grip", "RIGHT_GRIP" to "Right grip",
+                            "L4" to "L4 paddle", "R4" to "R4 paddle", "L5" to "L5 paddle", "R5" to "R5 paddle",
+                            "LEFT_BUMPER" to "Left bumper", "RIGHT_BUMPER" to "Right bumper",
+                            "A" to "A", "B" to "B", "X" to "X", "Y" to "Y",
+                            "L3" to "Left stick click", "R3" to "Right stick click",
+                            "RIGHT_PAD_TOUCH" to "Right pad touch", "LEFT_PAD_TOUCH" to "Left pad touch",
+                            "ANY_TOUCH" to "Any pad/stick touch", "ALL_TOUCH" to "All surfaces touched",
+                        ),
+                        gate, nav = nav, navLine = 3,
                     ) { gate = it }
                 }
                 NavApplyCancelRow(nav, onApply = doApply, onCancel = onDismiss)
