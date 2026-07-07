@@ -1,6 +1,7 @@
 package app.gamenative.utils
 
 import app.gamenative.steamcontroller.Activator
+import app.gamenative.steamcontroller.DpadLayout
 import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
@@ -87,6 +88,21 @@ class SteamControllerProfileImporterTest {
         assertEquals(ScOutput.Key(listOf(XKeycode.KEY_W)), d.up)
         assertEquals(ScOutput.Key(listOf(XKeycode.KEY_A)), d.left)
         assertEquals(ScOutput.Key(listOf(XKeycode.KEY_D)), d.right)
+        assertEquals(DpadLayout.EIGHT_WAY, d.layout) // no `layout` setting -> 8-way default
+    }
+
+    @Test
+    fun `dpad layout and overlap settings decode`() {
+        val vdf = """
+            "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+              "group" { "id" "0" "mode" "dpad"
+                "inputs" { "dpad_north" { "activators" { "Full_Press" { "bindings" { "binding" "key_press W" } } } } }
+                "settings" { "layout" "3" "overlap_region" "8000" } }
+              "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "joystick active" } } }
+        """.trimIndent()
+        val d = SteamControllerProfileImporter.importConfig(vdf).defaultProfile().leftStick as StickMode.DPad
+        assertEquals(DpadLayout.CROSS_GATE, d.layout)
+        assertEquals(8000f / 32768f, d.overlap, 1e-4f)
     }
 
     @Test
@@ -219,6 +235,20 @@ class SteamControllerProfileImporterTest {
         }
         assertEquals(Stick.LEFT, (gyroWith("1") as GyroMode.Joystick).stick)
         assertEquals(Stick.RIGHT, (gyroWith("2") as GyroMode.Joystick).stick)
+    }
+
+    @Test
+    fun `gyro joystick camera vs deflection sets the deflection flag`() {
+        fun gyroFor(mode: String): GyroMode {
+            val vdf = """
+                "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+                  "group" { "id" "0" "mode" "$mode" "inputs" {} "settings" {} }
+                  "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "gyro active" } } }
+            """.trimIndent()
+            return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().gyro
+        }
+        assertEquals(false, (gyroFor("gyro_to_joystick_camera") as GyroMode.Joystick).deflection)
+        assertEquals(true, (gyroFor("gyro_to_joystick_deflection") as GyroMode.Joystick).deflection)
     }
 
     private fun padWithMode(mode: String): PadMode {

@@ -79,6 +79,32 @@ class PadModesTest {
         assertEquals(0, sink.keyPresses(XKeycode.KEY_A))
     }
 
+    private fun dpad(layout: DpadLayout) = StickMode.DPad(
+        up = ScOutput.Key(XKeycode.KEY_W), down = ScOutput.Key(XKeycode.KEY_S),
+        left = ScOutput.Key(XKeycode.KEY_A), right = ScOutput.Key(XKeycode.KEY_D), layout = layout)
+
+    @Test
+    fun `dpad layout modes decide diagonal behavior`() {
+        // A NE diagonal (up + slightly-more right) exercises each layout differently.
+        val ne = leftStickState(24000, 20000) // +X right (D), +Y up (W); |X| > |Y| -> right dominant
+        // 8-way overlap: both cardinals press.
+        RecordingSink().let { s ->
+            ProfileInterpreter(s, ScProfile(leftStick = dpad(DpadLayout.EIGHT_WAY)), haptics = null).apply(ne)
+            assertEquals(1, s.keyPresses(XKeycode.KEY_W)); assertEquals(1, s.keyPresses(XKeycode.KEY_D))
+        }
+        // 4-way: only the dominant axis (right) presses.
+        RecordingSink().let { s ->
+            ProfileInterpreter(s, ScProfile(leftStick = dpad(DpadLayout.FOUR_WAY)), haptics = null).apply(ne)
+            assertEquals(0, s.keyPresses(XKeycode.KEY_W)); assertEquals(1, s.keyPresses(XKeycode.KEY_D))
+        }
+        // Cross gate: a near-perfect diagonal falls in the dead band -> nothing presses.
+        RecordingSink().let { s ->
+            ProfileInterpreter(s, ScProfile(leftStick = dpad(DpadLayout.CROSS_GATE)), haptics = null)
+                .apply(leftStickState(23000, 23000))
+            assertEquals(0, s.keys.count { it.pressed })
+        }
+    }
+
     @Test
     fun `pad-as-joystick deflects the chosen stick while touched and recenters on lift`() {
         val sink = RecordingSink()

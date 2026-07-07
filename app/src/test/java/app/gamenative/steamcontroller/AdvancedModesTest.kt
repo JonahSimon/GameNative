@@ -34,6 +34,29 @@ class AdvancedModesTest {
     }
 
     @Test
+    fun `gyro camera style returns to center when rotation stops`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Joystick(Stick.RIGHT, sensitivity = 0.001f, gate = GyroGate.ALWAYS, deflection = false)), haptics = null)
+        interp.apply(TritonState().apply { gyroZ = 500 })
+        assertTrue("camera deflects while rotating", sink.lastThumbRX < -0.4f)
+        interp.apply(TritonState().apply { gyroZ = 0 }) // rate-based: no rotation -> center
+        assertEquals(0f, sink.lastThumbRX, 0.001f)
+    }
+
+    @Test
+    fun `gyro deflection style holds position at rest and resets when the gate closes`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Joystick(Stick.RIGHT, sensitivity = 0.001f, gate = GyroGate.RIGHT_GRIP, deflection = true)), haptics = null)
+        interp.apply(TritonState().apply { gyroZ = 500; buttons = TritonProtocol.BTN_RGRIP }) // integrate -> -0.5
+        val held = sink.lastThumbRX
+        assertTrue("deflection accumulates an angle", held < -0.4f)
+        interp.apply(TritonState().apply { gyroZ = 0; buttons = TritonProtocol.BTN_RGRIP }) // no rotation -> HOLD
+        assertEquals("holds position while gated open", held, sink.lastThumbRX, 0.001f)
+        interp.apply(TritonState().apply { gyroZ = 0 }) // gate released -> ratchet reset to center
+        assertEquals(0f, sink.lastThumbRX, 0.001f)
+    }
+
+    @Test
     fun `gyro mouse uses the natural direction and per-axis invert`() {
         val nat = RecordingSink()
         ProfileInterpreter(nat, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.ALWAYS)), haptics = null)

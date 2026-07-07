@@ -228,6 +228,9 @@ data class EditAnalog(
     val down: EditBinding = EditBinding(),
     val left: EditBinding = EditBinding(),
     val right: EditBinding = EditBinding(),
+    /** DPAD: layout mode name (EIGHT_WAY / FOUR_WAY / ANALOG_EMU / CROSS_GATE) + normalized cross-gate band. */
+    val dpadLayout: String = "EIGHT_WAY",
+    val dpadOverlap: Float = 4000f / 32768f,
     // ── Menu modes (RADIAL / TOUCH_MENU / BUTTON_PAD) ──
     /** The menu's slots (ring order for RADIAL; row-major for TOUCH_MENU/BUTTON_PAD). */
     val slots: List<EditMenuSlot> = emptyList(),
@@ -250,7 +253,8 @@ data class EditAnalog(
         AnalogMode.NONE -> PadMode.None
         AnalogMode.MOUSE -> PadMode.Mouse(sensitivity = DEFAULT_PAD_MOUSE_SENS * sensitivityPct / 100f, invertY = invertY)
         AnalogMode.SCROLL_WHEEL -> PadMode.ScrollWheel(step = scrollStep, invertY = invertY)
-        AnalogMode.DPAD -> PadMode.DPad(up.toOutput(), down.toOutput(), left.toOutput(), right.toOutput(), deadzone = deadzonePct / 100f)
+        AnalogMode.DPAD -> PadMode.DPad(up.toOutput(), down.toOutput(), left.toOutput(), right.toOutput(), deadzone = deadzonePct / 100f,
+            layout = runCatching { DpadLayout.valueOf(dpadLayout) }.getOrDefault(DpadLayout.EIGHT_WAY), overlap = dpadOverlap)
         AnalogMode.RADIAL -> PadMode.RadialMenu(
             slots = menuSlots(), onClick = menuOnClick, activation = menuActivation(),
             center = menuCenter?.toMenuSlot(), directional = menuDirectional,
@@ -307,6 +311,7 @@ data class EditAnalog(
                 AnalogMode.DPAD, deadzonePct = (m.deadzone * 100f).roundToInt(),
                 up = EditBinding.fromOutput(m.up), down = EditBinding.fromOutput(m.down),
                 left = EditBinding.fromOutput(m.left), right = EditBinding.fromOutput(m.right),
+                dpadLayout = m.layout.name, dpadOverlap = m.overlap,
             )
             // Menus are representable only if every slot's output is editor-authorable; otherwise null = inherit the
             // base surface untouched (keeps the overlay lossless for exotic menu bindings).
@@ -397,6 +402,8 @@ data class EditGyro(
     val gate: String = "EITHER_GRIP",
     /** For JOYSTICK: which output stick (LEFT/RIGHT). */
     val outputStick: String = "RIGHT",
+    /** For JOYSTICK: deflection style (angle→held position) vs the default camera style (rate→velocity). */
+    val deflection: Boolean = false,
 ) {
     private fun gateEnum() = runCatching { GyroGate.valueOf(gate) }.getOrDefault(GyroGate.EITHER_GRIP)
     fun toRuntime(): GyroMode = when (mode) {
@@ -404,15 +411,17 @@ data class EditGyro(
         GyroEditMode.MOUSE -> GyroMode.Mouse(sensitivity = DEFAULT_GYRO_SENS * sensitivityPct / 100f, gate = gateEnum())
         GyroEditMode.JOYSTICK -> GyroMode.Joystick(
             stick = runCatching { Stick.valueOf(outputStick) }.getOrDefault(Stick.RIGHT),
-            sensitivity = DEFAULT_GYRO_JOY_SENS * sensitivityPct / 100f, gate = gateEnum(),
+            sensitivity = (if (deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * sensitivityPct / 100f,
+            gate = gateEnum(), deflection = deflection,
         )
     }
 
     companion object {
         const val DEFAULT_GYRO_SENS = 1f / 900f
-        const val DEFAULT_GYRO_JOY_SENS = 1f / 6000f // gyro rate → stick deflection
+        const val DEFAULT_GYRO_JOY_SENS = 1f / 6000f // camera: gyro rate → stick deflection
+        const val DEFAULT_GYRO_DEFLECT_SENS = 1f / 60000f // deflection: integrated angle → held position
         fun from(m: GyroMode): EditGyro = when (m) {
-            is GyroMode.Joystick -> EditGyro(GyroEditMode.JOYSTICK, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_JOY_SENS * 100f).roundToInt(), gate = m.gate.name, outputStick = m.stick.name)
+            is GyroMode.Joystick -> EditGyro(GyroEditMode.JOYSTICK, sensitivityPct = (m.sensitivity / (if (m.deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * 100f).roundToInt(), gate = m.gate.name, outputStick = m.stick.name, deflection = m.deflection)
             is GyroMode.None -> EditGyro(GyroEditMode.OFF)
             is GyroMode.Mouse -> EditGyro(GyroEditMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_SENS * 100f).roundToInt(), gate = m.gate.name)
         }

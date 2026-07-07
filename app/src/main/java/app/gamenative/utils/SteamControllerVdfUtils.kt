@@ -2,6 +2,7 @@ package app.gamenative.utils
 
 import app.gamenative.steamcontroller.Activator
 import app.gamenative.steamcontroller.Binding
+import app.gamenative.steamcontroller.DpadLayout
 import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
@@ -531,6 +532,7 @@ object SteamControllerProfileImporter {
                 up = dirOut(group, "dpad_north"), down = dirOut(group, "dpad_south"),
                 left = dirOut(group, "dpad_west"), right = dirOut(group, "dpad_east"),
                 deadzone = readDeadzone(s, default = 0.35f),
+                layout = readDpadLayout(s), overlap = readOverlap(s),
             ).takeIf { listOf(it.up, it.down, it.left, it.right).any { o -> o != ScOutput.None } } ?: StickMode.None
             "radial_menu" -> parseRadial(group).let {
                 if (it.ring.isEmpty()) StickMode.None // HOLD by default (movement radial)
@@ -554,6 +556,7 @@ object SteamControllerProfileImporter {
                 up = dirOut(group, "dpad_north"), down = dirOut(group, "dpad_south"),
                 left = dirOut(group, "dpad_west"), right = dirOut(group, "dpad_east"),
                 deadzone = readDeadzone(s, default = 0.35f),
+                layout = readDpadLayout(s), overlap = readOverlap(s),
             )
             "scrollwheel" -> PadMode.ScrollWheel()
             // Mouse Region (Steam `mouse_region`): finger position → 1:1 screen position within a region. Params
@@ -717,11 +720,16 @@ object SteamControllerProfileImporter {
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
             "gyro_to_mouse", "mouse", "absolute_mouse", "mouse_region" ->
                 GyroMode.Mouse((1.0f / 900f) * readSensScale(s), gate)
-            "gyro_to_joystick", "gyro_to_joystick_camera", "gyro_to_joystick_deflection" ->
+            "gyro_to_joystick", "gyro_to_joystick_camera", "gyro_to_joystick_deflection" -> {
+                // Deflection integrates gyro angle each frame (held position), so its base scale is ~10× smaller than
+                // camera's per-frame rate→deflection to land in the same feel range. Both feel-tuned on-device.
+                val deflection = mode == "gyro_to_joystick_deflection"
                 GyroMode.Joystick(
                     stick = if (s?.getString("output_joystick") == "1") Stick.LEFT else Stick.RIGHT,
-                    sensitivity = (1.0f / 6000f) * readSensScale(s), gate = gate,
+                    sensitivity = (if (deflection) 1.0f / 60000f else 1.0f / 6000f) * readSensScale(s),
+                    gate = gate, deflection = deflection,
                 )
+            }
             "", "disabled" -> GyroMode.None
             else -> { Timber.tag(TAG).d("unsupported gyro mode '$mode' -> None"); GyroMode.None }
         }
@@ -740,6 +748,14 @@ object SteamControllerProfileImporter {
     }
 
     // ---- per-group tunable settings -> existing model fields (the common ones; the long tail is step 3/7) ----
+
+    /** D-pad `layout` (0=8-way / 1=4-way / 2=analog-emu / 3=cross-gate); absent → 8-way. */
+    private fun readDpadLayout(s: VdfObject?): DpadLayout =
+        DpadLayout.fromVdf(s?.getString("layout")?.toIntOrNull() ?: 0)
+
+    /** D-pad `overlap_region` (raw 2000..16000 on the 32768 scale; def 4000) → normalized 0..1 dead-diagonal band. */
+    private fun readOverlap(s: VdfObject?): Float =
+        (s?.getString("overlap_region")?.toIntOrNull() ?: 4000) / 32768f
 
     /** Steam inner dead zone is raw 0..32768; our `deadzone` is 0..1. Falls back to [default] when unset. */
     private fun readDeadzone(settings: VdfObject?, default: Float): Float {

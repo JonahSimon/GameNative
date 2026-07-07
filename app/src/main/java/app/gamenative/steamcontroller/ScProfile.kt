@@ -217,6 +217,9 @@ sealed class StickMode {
     data class DPad(
         val up: ScOutput, val down: ScOutput, val left: ScOutput, val right: ScOutput,
         val deadzone: Float = 0.35f,
+        val layout: DpadLayout = DpadLayout.EIGHT_WAY,
+        /** CROSS_GATE dead-diagonal band width, normalized 0..1 (Steam `overlap_region`/32768; def 4000 ≈ 0.122). */
+        val overlap: Float = 4000f / 32768f,
     ) : StickMode()
 }
 
@@ -230,6 +233,16 @@ sealed class StickMode {
 enum class MenuActivation { COMMIT, HOLD }
 
 enum class Stick { LEFT, RIGHT }
+
+/** Steam d-pad `layout`: how deflection maps to the 4 directions.
+ *  - [EIGHT_WAY] (0): each axis independent → diagonals press two directions (the default).
+ *  - [FOUR_WAY] (1): only the dominant axis fires → no diagonals.
+ *  - [ANALOG_EMU] (2): Steam emits an analog stick; our d-pad outputs are key/mouse edges, so there's nothing analog
+ *    to emit → falls back to [EIGHT_WAY] (ponytail: no analog output path for key binds; revisit if a dpad→stick bind exists).
+ *  - [CROSS_GATE] (3): cardinal only, with a dead diagonal band ([overlap] wide) so near-diagonals press nothing. */
+enum class DpadLayout { EIGHT_WAY, FOUR_WAY, ANALOG_EMU, CROSS_GATE;
+    companion object { fun fromVdf(v: Int) = when (v) { 1 -> FOUR_WAY; 2 -> ANALOG_EMU; 3 -> CROSS_GATE; else -> EIGHT_WAY } }
+}
 
 /** Response curve applied to an analog magnitude (0..1) before output. Approximates Steam's curve presets. */
 enum class ResponseCurve { LINEAR, AGGRESSIVE, RELAXED, WIDE, EXTRA_WIDE;
@@ -275,6 +288,9 @@ sealed class PadMode {
         val left: ScOutput,
         val right: ScOutput,
         val deadzone: Float = 0.35f,
+        val layout: DpadLayout = DpadLayout.EIGHT_WAY,
+        /** CROSS_GATE dead-diagonal band width, normalized 0..1 (Steam `overlap_region`/32768; def 4000 ≈ 0.122). */
+        val overlap: Float = 4000f / 32768f,
     ) : PadMode()
     /** Finger slide → scroll wheel: every [step] pad-units of vertical travel emits one wheel click. */
     data class ScrollWheel(val step: Int = 6000, val invertY: Boolean = false) : PadMode()
@@ -361,9 +377,14 @@ sealed class GyroMode {
     object None : GyroMode()
     /** Gyro rate -> mouse aim delta, gated by [gate] (e.g. only while a grip is held). */
     data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false) : GyroMode()
-    /** Gyro rate -> virtual XInput stick deflection (Steam `gyro_to_joystick` / `_deflection` — camera-style aim
-     *  on games with stick-only look). Yaw→X, pitch→Y, scaled by [sensitivity], gated by [gate]. */
-    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false) : GyroMode()
+    /** Gyro -> virtual XInput stick. Two Steam styles, distinguished by [deflection]:
+     *  - **camera** (`gyro_to_joystick_camera`, [deflection]=false): gyro *rate* → stick deflection (fast spin =
+     *    far push, stops at rest — velocity-like aim for stick-look games). Yaw→X, pitch→Y.
+     *  - **deflection** (`gyro_to_joystick_deflection`, [deflection]=true): gyro *angle* (integrated while gated) →
+     *    *held* stick position — tilt to an angle and the stick stays there until you rotate back. The accumulated
+     *    angle resets to center when the gate closes (ratchet), so integration drift can't build up.
+     *  Both scaled by [sensitivity], gated by [gate], output to [stick]. */
+    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false, val deflection: Boolean = false) : GyroMode()
 }
 
 /** When a gyro mode is active. Grips are the rear paddles; the pad/stick-touch gates enable "touch-to-aim" (gyro

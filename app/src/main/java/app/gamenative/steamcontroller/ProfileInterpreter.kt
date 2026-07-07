@@ -130,6 +130,10 @@ class ProfileInterpreter(
     private val gp = GamepadState()
     private var prevButtons = 0
 
+    // Held stick position for GyroMode.Joystick(deflection=true): integrated gyro angle, reset when the gate closes.
+    private var gyroDefX = 0f
+    private var gyroDefY = 0f
+
     // ---- timed scheduler (per-binding delays + macro playback) ----
     // A queue of press/release ops due at an absolute clock time. Drained each frame. Keys/mouse go straight to the
     // sink; gamepad outputs held by a running macro are collected in [macroBtns]/[macroDpad] and OR'd into gp.
@@ -290,6 +294,10 @@ class ProfileInterpreter(
         // rather than sticking (non-mapped bits are never otherwise cleared).
         gp.buttons = 0
         for (i in 0..3) gp.dpad[i] = false
+        // Reset the virtual sticks too: every stick writer (JoystickMove / DPad / pad-as-joystick) ASSIGNS each frame,
+        // and gyro-joystick ADDS on top — so without this, gyro-joystick with a None output stick accumulates across
+        // frames instead of tracking rate (camera never returns to center). Deflection keeps its own held accumulator.
+        gp.thumbLX = 0f; gp.thumbLY = 0f; gp.thumbRX = 0f; gp.thumbRY = 0f
         for ((bit, b) in p.buttons) {
             when (val out = b.output) {
                 is ScOutput.GamepadButton -> gp.setPressed(out.idx, s.has(bit))
@@ -817,17 +825,32 @@ class ProfileInterpreter(
         if (b.activator !is Activator.Turbo) releaseOutput(b.output)
     }
 
-    /** 8-way d-pad: bit0=up, bit1=down, bit2=left, bit3=right. Edge-press [outs] as the mask changes; returns the new
-     *  mask (store it back). [cx]/[cy] = normalized deflection (+Y up); [active]=false forces neutral (e.g. pad lifted). */
-    private fun driveDpad(cx: Float, cy: Float, active: Boolean, deadzone: Float, outs: Array<ScOutput>, prevMask: Int): Int {
-        val mask = if (!active) 0 else {
-            var m = 0
-            if (cy > deadzone) m = m or 0x1
-            if (cy < -deadzone) m = m or 0x2
-            if (cx < -deadzone) m = m or 0x4
-            if (cx > deadzone) m = m or 0x8
-            m
+    /** d-pad direction mask for a normalized deflection, honoring the [layout] (bit0=up, bit1=down, bit2=left,
+     *  bit3=right; +cy = up). See [DpadLayout]. */
+    private fun dpadMask(cx: Float, cy: Float, deadzone: Float, layout: DpadLayout, overlap: Float): Int {
+        val ax = abs(cx); val ay = abs(cy)
+        if (ax < deadzone && ay < deadzone) return 0
+        return when (layout) {
+            DpadLayout.EIGHT_WAY, DpadLayout.ANALOG_EMU -> {
+                var m = 0
+                if (cy > deadzone) m = m or 0x1
+                if (cy < -deadzone) m = m or 0x2
+                if (cx < -deadzone) m = m or 0x4
+                if (cx > deadzone) m = m or 0x8
+                m
+            }
+            DpadLayout.FOUR_WAY, DpadLayout.CROSS_GATE -> {
+                // Cross gate: near-diagonals (the two axes close in magnitude) press nothing.
+                if (layout == DpadLayout.CROSS_GATE && abs(ay - ax) < overlap) return 0
+                if (ay >= ax) { if (cy > 0) 0x1 else 0x2 } else { if (cx < 0) 0x4 else 0x8 }
+            }
         }
+    }
+
+    /** d-pad: edge-press [outs] as the mask changes; returns the new mask (store it back). [cx]/[cy] = normalized
+     *  deflection (+Y up); [active]=false forces neutral (e.g. pad lifted). */
+    private fun driveDpad(cx: Float, cy: Float, active: Boolean, deadzone: Float, layout: DpadLayout, overlap: Float, outs: Array<ScOutput>, prevMask: Int): Int {
+        val mask = if (!active) 0 else dpadMask(cx, cy, deadzone, layout, overlap)
         if (mask == prevMask) return mask
         for (i in 0..3) {
             val bit = 1 shl i
@@ -838,13 +861,13 @@ class ProfileInterpreter(
     }
 
     private fun applyPadDpad(mode: PadMode.DPad, rt: PadRuntime, touched: Boolean, x: Int, y: Int) {
-        rt.dpadMask = driveDpad(x / 32768f, y / 32768f, touched, mode.deadzone,
+        rt.dpadMask = driveDpad(x / 32768f, y / 32768f, touched, mode.deadzone, mode.layout, mode.overlap,
             arrayOf(mode.up, mode.down, mode.left, mode.right), rt.dpadMask)
     }
 
-    /** Stick as an 8-way d-pad: always live (deflection past the deadzone presses a direction; recenters to neutral). */
+    /** Stick as a d-pad: always live (deflection past the deadzone presses a direction; recenters to neutral). */
     private fun applyStickDpad(mode: StickMode.DPad, rawX: Int, rawY: Int, rt: MenuRuntime) {
-        rt.dpadMask = driveDpad(rawX / 32768f, rawY / 32768f, active = true, mode.deadzone,
+        rt.dpadMask = driveDpad(rawX / 32768f, rawY / 32768f, active = true, mode.deadzone, mode.layout, mode.overlap,
             arrayOf(mode.up, mode.down, mode.left, mode.right), rt.dpadMask)
     }
 
@@ -1035,18 +1058,31 @@ class ProfileInterpreter(
                 }
             }
             is GyroMode.Joystick -> {
-                // Gyro rate -> stick deflection (yaw→X, pitch→Y), ADDED on top of any physical stick when gated
-                // open (so gyro layers onto stick-look rather than fighting it); no-op when gated closed.
-                if (gyroGateOpen(mode.gate, s)) {
-                    val sx = if (mode.invertX) 1f else -1f
-                    val sy = if (mode.invertY) 1f else -1f
-                    val x = (sx * s.gyroZ * mode.sensitivity).coerceIn(-1f, 1f)
-                    val y = (sy * s.gyroX * mode.sensitivity).coerceIn(-1f, 1f)
-                    if (mode.stick == Stick.LEFT) {
-                        gp.thumbLX = (gp.thumbLX + x).coerceIn(-1f, 1f); gp.thumbLY = (gp.thumbLY + y).coerceIn(-1f, 1f)
-                    } else {
-                        gp.thumbRX = (gp.thumbRX + x).coerceIn(-1f, 1f); gp.thumbRY = (gp.thumbRY + y).coerceIn(-1f, 1f)
-                    }
+                // ADDED on top of any physical stick when gated open (so gyro layers onto stick-look rather than
+                // fighting it); no-op when gated closed. Camera = rate→deflection (returns to center at rest);
+                // deflection = integrated angle→held position (stays put until you rotate back).
+                val open = gyroGateOpen(mode.gate, s)
+                val sx = if (mode.invertX) 1f else -1f
+                val sy = if (mode.invertY) 1f else -1f
+                val x: Float; val y: Float
+                if (mode.deflection) {
+                    // Integrate rate while gated; reset the accumulated angle to center when released (ratchet, so
+                    // gyro drift can't accumulate). ponytail: raw-count integration, no dt — sensitivity is the
+                    // per-game feel knob (matches camera's frame-rate model); switch to dt if frame rate drifts.
+                    if (open) {
+                        gyroDefX = (gyroDefX + sx * s.gyroZ * mode.sensitivity).coerceIn(-1f, 1f)
+                        gyroDefY = (gyroDefY + sy * s.gyroX * mode.sensitivity).coerceIn(-1f, 1f)
+                    } else { gyroDefX = 0f; gyroDefY = 0f }
+                    x = gyroDefX; y = gyroDefY
+                } else {
+                    if (!open) return
+                    x = (sx * s.gyroZ * mode.sensitivity).coerceIn(-1f, 1f)
+                    y = (sy * s.gyroX * mode.sensitivity).coerceIn(-1f, 1f)
+                }
+                if (mode.stick == Stick.LEFT) {
+                    gp.thumbLX = (gp.thumbLX + x).coerceIn(-1f, 1f); gp.thumbLY = (gp.thumbLY + y).coerceIn(-1f, 1f)
+                } else {
+                    gp.thumbRX = (gp.thumbRX + x).coerceIn(-1f, 1f); gp.thumbRY = (gp.thumbRY + y).coerceIn(-1f, 1f)
                 }
             }
             GyroMode.None -> {}
