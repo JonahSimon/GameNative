@@ -41,6 +41,27 @@ It's still early. Not every game runs yet, and some need tweaking to play well, 
 - Steam DLC, workshop and branch support
 - Active support over Discord if you need help getting a game running
 
+## 🎮 Steam Controller (2026 "Triton") support — this branch (`steam-controller-2026`)
+
+This fork branch adds **full wireless Valve Steam Controller (2026) support** — all buttons incl. the 4 rear paddles,
+**dual trackpads**, **gyro**, and **haptics** — over **direct Bluetooth LE, no dongle and no root**. The controller isn't
+registered as an Android gamepad; a parallel path reads its custom GATT service (the one catch was the BLE MTU) and runs
+a self-contained, **Steam-Input-style mapping engine** that translates it to a virtual XInput pad + keyboard/mouse. It's
+**additive and isolated** — GameNative's existing controller code is untouched; the only shared surface is the output
+seam (virtual-gamepad / X-server inject).
+
+What it does, all configurable **live from an in-game editor** (controller-navigable):
+- **Per-game configs** with a `.vdf` importer (real Steam Input configs) + a named-config registry; action sets, layers, mode-shift.
+- **Trackpad/stick modes:** mouse, mouse-region, joystick, d-pad (8-/4-way/cross-gate), directional swipe, scroll, radial/touch menus with an on-screen HUD.
+- **Gyro:** as-mouse and as-joystick (camera vs deflection), Enable/Suppress/Toggle activation on any button, plus a full feel set (accel, H/V mixer, speed-deadzone, precision, power-curve, output-range).
+- **Split-trackpad on-screen keyboard**, BLE haptics, per-game overlay editors.
+
+The engine/importer/editor are unit-tested; the transport + integration are validated on a Z Fold 7 (DOOM, ToME4, WoW).
+This is intended as an **additive PR** to GameNative. See `newprompt.md` (live handoff) + `docs/` in the parent research
+repo for the full design, and `docs/IMPLEMENTATION-OVERVIEW.md` for the architecture. Everything below is upstream GameNative.
+
+---
+
 ## Demo
 
 [TechDweeb](https://www.youtube.com/@TechDweeb) walks through setting up GameNative on an Android handheld in a couple of minutes:
