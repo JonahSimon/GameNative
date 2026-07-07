@@ -2258,14 +2258,19 @@ fun XServerScreen(
                         }
                         override fun moveCursor(dx: Int, dy: Int) {
                             scMainHandler.post {
+                                // Only draw the nav cursor while a menu/editor is capturing; otherwise a stray move
+                                // (or a leftover dot) must not attach to the game view. Detach on any out-of-capture move.
+                                if (!isMenuCapturing()) { scCursor.detach(); return@post }
                                 scCursor.move(app.gamenative.ui.component.dialog.ScNavDialogStack.topView() ?: view, dx, dy)
                             }
                         }
                         override fun cursorTap() {
                             scMainHandler.post {
+                                if (!isMenuCapturing()) { scCursor.detach(); return@post }
                                 scCursor.tap(app.gamenative.ui.component.dialog.ScNavDialogStack.topView() ?: view)
                             }
                         }
+                        override fun hideCursor() { scMainHandler.post { scCursor.detach() } }
                         override fun nav(key: app.gamenative.steamcontroller.ScNavKey) {
                             scMainHandler.post {
                                 val act = context as? ComponentActivity ?: return@post

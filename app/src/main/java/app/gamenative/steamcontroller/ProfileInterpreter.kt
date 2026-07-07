@@ -261,12 +261,18 @@ class ProfileInterpreter(
     private val navClickGain = HapticSettings().clickGain
     private val navTickGain = HapticSettings().tickGain
     private var navCursorTickAccum = 0f
+    private var prevCapturing = false
 
     fun apply(s: TritonState) {
         // GameNative's QuickMenu / in-game editors take over the controller while up: translate movement + buttons
         // into Android focus-nav keys and suppress all game output (the BLE Triton isn't an Android input device,
         // so this is the only way it can drive those Compose surfaces). Checked first so an open menu always wins.
-        if (uiBridge.isMenuCapturing()) {
+        val capturing = uiBridge.isMenuCapturing()
+        // On the falling edge (menu/editor closed), remove the pad-mouse nav cursor — nothing else drives it once
+        // capture ends, so without this it freezes on-screen (bug: white dot stuck centre after closing the QuickMenu).
+        if (prevCapturing && !capturing) uiBridge.hideCursor()
+        prevCapturing = capturing
+        if (capturing) {
             handleMenuNav(s)
             prevButtons = s.buttons
             return

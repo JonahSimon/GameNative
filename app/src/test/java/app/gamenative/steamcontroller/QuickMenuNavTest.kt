@@ -15,10 +15,12 @@ class QuickMenuNavTest {
 
     private class FakeBridge(var capturing: Boolean = false) : ScUiBridge {
         var opens = 0
+        var hides = 0
         val navs = ArrayList<ScNavKey>()
         override fun isMenuCapturing() = capturing
         override fun openQuickMenu() { opens++ }
         override fun nav(key: ScNavKey) { navs.add(key) }
+        override fun hideCursor() { hides++ }
     }
 
     private fun interp(bridge: FakeBridge, profile: ScProfile = ScProfile.default(), sink: RecordingSink = RecordingSink()) =
@@ -31,6 +33,19 @@ class QuickMenuNavTest {
         i.apply(TritonState())                                           // baseline, no buttons
         i.apply(TritonState().apply { buttons = TritonProtocol.BTN_STEAM }) // rising edge
         assertEquals(1, bridge.opens)
+    }
+
+    @Test
+    fun `nav cursor is hidden when menu capture ends`() {
+        val bridge = FakeBridge(capturing = true)
+        val i = interp(bridge)
+        i.apply(TritonState())          // capturing -> drives nav, no hide
+        assertEquals(0, bridge.hides)
+        bridge.capturing = false
+        i.apply(TritonState())          // falling edge -> cursor detached exactly once
+        assertEquals(1, bridge.hides)
+        i.apply(TritonState())          // still closed -> not repeatedly hidden
+        assertEquals(1, bridge.hides)
     }
 
     @Test

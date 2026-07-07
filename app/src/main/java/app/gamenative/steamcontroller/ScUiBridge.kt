@@ -27,6 +27,9 @@ interface ScUiBridge {
 
     /** Inject a tap (down+up) at the current cursor position into the top dialog (right-pad click). UI thread. */
     fun cursorTap() {}
+
+    /** Remove the on-screen pad-mouse cursor (called when menu/editor capture ends so the dot doesn't stick). */
+    fun hideCursor() {}
 }
 
 /** Direction/selection intents emitted by the interpreter while a menu is captured; mapped to Android d-pad,

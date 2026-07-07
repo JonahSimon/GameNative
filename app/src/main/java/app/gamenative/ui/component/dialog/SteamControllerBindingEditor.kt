@@ -108,6 +108,7 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
     var editingTrigger by remember { mutableStateOf<TriggerSide?>(null) }
     var editingGyro by remember { mutableStateOf(false) }
     var editingHaptics by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
     // Menus from an imported .vdf / the built-in default aren't authored in this editor (they resolve as INHERIT),
     // so their slot labels can't be renamed inline — enumerate them and offer a scoped "Rename slots…" affordance
     // on the matching surface, keyed by (setId, location) and backed by the label overlay (ScMenuLabels).
@@ -157,25 +158,21 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
                             Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.ButtonA -> { nav.activate(); true }
                             Key.ButtonL1 -> { cycleSet(-1); true }
                             Key.ButtonR1 -> { cycleSet(1); true }
+                            Key.ButtonY -> { showHelp = !showHelp; true }
                             else -> false
                         }
                     },
             ) {
                 ScNavDialogCapture(onBack = onDismiss)  // let the controller navigate this dialog window
-                Text("Steam Controller bindings", style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "Tap a button to rebind it; tap a stick/trackpad, trigger, gyro, or haptics row to change its " +
-                        "behavior. Inherited menus (from the built-in default / imported .vdf) show a “Rename slots…” " +
-                        "action; authored menus rename their slots inside the surface's behavior editor.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
-                )
-                // ── Action sets (Phase 5d): pick which set to edit, add/rename/delete, choose the launch default ──
+                // Compact header: action-set chips sit at the top (title + long description moved out → Y = Help);
+                // the Set name / Layer / Default / Delete row moved into the scroll list so it doesn't sit fixed.
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Action sets", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     BumperHint("LB")
                     BumperHint("RB")
                     Text("switch set", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { showHelp = true }) { Text("Y: Help") }
                 }
                 CmdFlow {
                     config.sets.forEachIndexed { i, s ->
@@ -194,52 +191,6 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
                         CmdChip("+ Add", selected = false, onClick = addSet)
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    var editingName by remember { mutableStateOf(false) }
-                    ScNavItem(nav, line = 1, col = 0, modifier = Modifier.weight(1f), onActivate = { editingName = true }) {
-                        ScTextEditField(
-                            label = "Set name",
-                            value = config.sets[activeIdx].name,
-                            onValueChange = { newName ->
-                                config = config.copy(
-                                    sets = config.sets.toMutableList().also { it[activeIdx] = it[activeIdx].copy(name = newName) },
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            editing = editingName,
-                            onEditingChange = { editingName = it },
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    // Mark this set as an action LAYER (a partial overlay pushed by a "hold/add layer" binding) vs a
-                    // base action set. A layer overrides only the surfaces it defines + its buttons (see LayerOp).
-                    val isLayer = config.sets[activeIdx].isLayer
-                    val toggleLayer = {
-                        config = config.copy(sets = config.sets.toMutableList().also { it[activeIdx] = it[activeIdx].copy(isLayer = !isLayer) })
-                    }
-                    val makeDefault = { config = config.copy(defaultSetId = activeSetId) }
-                    val deleteSet = {
-                        if (config.sets.size > 1) {
-                            val removedId = config.sets[activeIdx].id
-                            val newSets = config.sets.filterIndexed { idx, _ -> idx != activeIdx }
-                            val newDefault = if (config.defaultSetId == removedId) newSets.first().id else config.defaultSetId
-                            config = config.copy(sets = newSets, defaultSetId = newDefault)
-                            activeSetId = newSets.first().id
-                        }
-                    }
-                    ScNavItem(nav, line = 1, col = 1, onActivate = toggleLayer) {
-                        TextButton(onClick = toggleLayer) { Text(if (isLayer) "Layer ✓" else "Layer") }
-                    }
-                    ScNavItem(nav, line = 1, col = 2, onActivate = makeDefault) {
-                        TextButton(onClick = makeDefault, enabled = config.defaultSetId != activeSetId) { Text("Default") }
-                    }
-                    ScNavItem(nav, line = 1, col = 3, onActivate = deleteSet) {
-                        TextButton(onClick = deleteSet, enabled = config.sets.size > 1) { Text("Delete") }
-                    }
-                }
                 HorizontalDivider(modifier = Modifier.padding(top = 6.dp))
 
                 Column(
@@ -253,7 +204,55 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
                 ) {
                     // Inset the rows from the right so the scrollbar (drawn on the outer edge) doesn't overlap them.
                     Column(modifier = Modifier.fillMaxWidth().padding(end = 12.dp)) {
-                        var navLine = 2 // lines 0=set chips, 1=Layer/Default/Delete; the scroll list starts at 2
+                        // Set name + Layer / Default / Delete for the active set — first in the scroll list (line 1) so
+                        // it scrolls away instead of sitting in the fixed header. Set chips stay pinned at the top (line 0).
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            var editingName by remember { mutableStateOf(false) }
+                            ScNavItem(nav, line = 1, col = 0, modifier = Modifier.weight(1f), onActivate = { editingName = true }) {
+                                ScTextEditField(
+                                    label = "Set name",
+                                    value = config.sets[activeIdx].name,
+                                    onValueChange = { newName ->
+                                        config = config.copy(
+                                            sets = config.sets.toMutableList().also { it[activeIdx] = it[activeIdx].copy(name = newName) },
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    editing = editingName,
+                                    onEditingChange = { editingName = it },
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            // Mark this set as an action LAYER (a partial overlay pushed by a "hold/add layer" binding)
+                            // vs a base action set. A layer overrides only the surfaces it defines + its buttons.
+                            val isLayer = config.sets[activeIdx].isLayer
+                            val toggleLayer = {
+                                config = config.copy(sets = config.sets.toMutableList().also { it[activeIdx] = it[activeIdx].copy(isLayer = !isLayer) })
+                            }
+                            val makeDefault = { config = config.copy(defaultSetId = activeSetId) }
+                            val deleteSet = {
+                                if (config.sets.size > 1) {
+                                    val removedId = config.sets[activeIdx].id
+                                    val newSets = config.sets.filterIndexed { idx, _ -> idx != activeIdx }
+                                    val newDefault = if (config.defaultSetId == removedId) newSets.first().id else config.defaultSetId
+                                    config = config.copy(sets = newSets, defaultSetId = newDefault)
+                                    activeSetId = newSets.first().id
+                                }
+                            }
+                            ScNavItem(nav, line = 1, col = 1, onActivate = toggleLayer) {
+                                TextButton(onClick = toggleLayer) { Text(if (isLayer) "Layer ✓" else "Layer") }
+                            }
+                            ScNavItem(nav, line = 1, col = 2, onActivate = makeDefault) {
+                                TextButton(onClick = makeDefault, enabled = config.defaultSetId != activeSetId) { Text("Default") }
+                            }
+                            ScNavItem(nav, line = 1, col = 3, onActivate = deleteSet) {
+                                TextButton(onClick = deleteSet, enabled = config.sets.size > 1) { Text("Delete") }
+                            }
+                        }
+                        var navLine = 2 // lines 0=set chips, 1=set name / Layer/Default/Delete; source list starts at 2
                         var lastGroup = ""
                         for (src in ScSource.entries) {
                             if (src.group != lastGroup) {
@@ -408,6 +407,22 @@ fun SteamControllerBindingEditorDialog(containerId: String, onDismiss: () -> Uni
             current = profile.haptics ?: EditHaptics(),
             onDismiss = { editingHaptics = false },
             onApply = { h -> setProfile(profile.copy(haptics = h)); editingHaptics = false },
+        )
+    }
+    if (showHelp) {
+        AlertDialog(
+            onDismissRequest = { showHelp = false },
+            title = { Text("Steam Controller bindings — help") },
+            text = {
+                Text(
+                    "Tap a button row to rebind it; tap a stick / trackpad / trigger / gyro / haptics row to change its " +
+                        "behavior. LB/RB switch action sets. The Set name row (top of the list) renames the active set and " +
+                        "marks it a Layer, the launch Default, or deletes it. Inherited menus (from the built-in default / " +
+                        "imported .vdf) show a “Rename slots…” action; authored menus rename slots inside the behavior editor.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = { TextButton(onClick = { showHelp = false }) { Text("Close") } },
         )
     }
 }
