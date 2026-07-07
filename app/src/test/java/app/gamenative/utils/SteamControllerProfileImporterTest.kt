@@ -2,6 +2,7 @@ package app.gamenative.utils
 
 import app.gamenative.steamcontroller.Activator
 import app.gamenative.steamcontroller.DpadLayout
+import app.gamenative.steamcontroller.GyroActivation
 import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
@@ -267,6 +268,21 @@ class SteamControllerProfileImporterTest {
         }
         assertEquals(Stick.LEFT, (gyroWith("1") as GyroMode.Joystick).stick)
         assertEquals(Stick.RIGHT, (gyroWith("2") as GyroMode.Joystick).stick)
+    }
+
+    @Test
+    fun `gyro_button decodes the enable-suppress-toggle activation`() {
+        fun gyroFor(button: String): GyroMode {
+            val vdf = """
+                "controller_mappings" { "version" "3" "controller_type" "controller_triton"
+                  "group" { "id" "0" "mode" "gyro_to_mouse" "inputs" {} "settings" { "gyro_button" "$button" } }
+                  "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "gyro active" } } }
+            """.trimIndent()
+            return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().gyro
+        }
+        assertEquals(GyroActivation.SUPPRESS, (gyroFor("2") as GyroMode.Mouse).activation)
+        assertEquals(GyroActivation.TOGGLE, (gyroFor("3") as GyroMode.Mouse).activation)
+        assertEquals(GyroActivation.ENABLE, (gyroFor("1") as GyroMode.Mouse).activation) // 1/absent -> enable
     }
 
     @Test

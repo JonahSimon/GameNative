@@ -383,16 +383,17 @@ data class MenuSlot(val binding: Binding, val label: String = "")
  *  pitch-up→aim-up); the natural default was chosen after on-device feedback that the raw sign felt backwards. */
 sealed class GyroMode {
     object None : GyroMode()
-    /** Gyro rate -> mouse aim delta, gated by [gate] (e.g. only while a grip is held). */
-    data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false) : GyroMode()
+    /** Gyro rate -> mouse aim delta, gated by [gate] (e.g. only while a grip is held). [activation] = what the gate
+     *  button DOES (hold-to-enable / hold-to-suppress / press-to-toggle). */
+    data class Mouse(val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false, val activation: GyroActivation = GyroActivation.ENABLE) : GyroMode()
     /** Gyro -> virtual XInput stick. Two Steam styles, distinguished by [deflection]:
      *  - **camera** (`gyro_to_joystick_camera`, [deflection]=false): gyro *rate* → stick deflection (fast spin =
      *    far push, stops at rest — velocity-like aim for stick-look games). Yaw→X, pitch→Y.
      *  - **deflection** (`gyro_to_joystick_deflection`, [deflection]=true): gyro *angle* (integrated while gated) →
      *    *held* stick position — tilt to an angle and the stick stays there until you rotate back. The accumulated
      *    angle resets to center when the gate closes (ratchet), so integration drift can't build up.
-     *  Both scaled by [sensitivity], gated by [gate], output to [stick]. */
-    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false, val deflection: Boolean = false) : GyroMode()
+     *  Both scaled by [sensitivity], gated by [gate], output to [stick]. [activation] = what the gate button DOES. */
+    data class Joystick(val stick: Stick = Stick.RIGHT, val sensitivity: Float, val gate: GyroGate = GyroGate.EITHER_GRIP, val invertX: Boolean = false, val invertY: Boolean = false, val deflection: Boolean = false, val activation: GyroActivation = GyroActivation.ENABLE) : GyroMode()
 }
 
 /** When a gyro mode is active. Grips are the rear paddles; the pad/stick-touch gates enable "touch-to-aim" (gyro
@@ -405,6 +406,13 @@ enum class GyroGate {
     /** Gyro active only while ALL four touch surfaces are touched at once (mask covering them, require-all). */
     ALL_TOUCH,
 }
+
+/** What the gyro gate button(s) DO (Steam "Gyro Enable/Suppress/Toggle", vdf `gyro_button`):
+ *  - [ENABLE]: gyro is active *while* the gate is held (the default; a plain hold-to-aim grip).
+ *  - [SUPPRESS]: gyro is active *unless* the gate is held (on by default, hold to turn OFF for a precise moment).
+ *  - [TOGGLE]: each gate *press* flips gyro on/off (hands-free aim + easy ratcheting — toggle off, recenter, toggle on).
+ *  With gate = [GyroGate.ALWAYS] there is no button, so [activation] is moot (gyro is simply always on). */
+enum class GyroActivation { ENABLE, SUPPRESS, TOGGLE }
 
 /**
  * Trackpad/haptic feel parameters — profile-driven so the binding-editor UI can expose full haptics control

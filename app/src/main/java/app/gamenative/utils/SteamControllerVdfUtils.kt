@@ -3,6 +3,7 @@ package app.gamenative.utils
 import app.gamenative.steamcontroller.Activator
 import app.gamenative.steamcontroller.Binding
 import app.gamenative.steamcontroller.DpadLayout
+import app.gamenative.steamcontroller.GyroActivation
 import app.gamenative.steamcontroller.GyroGate
 import app.gamenative.steamcontroller.GyroMode
 import app.gamenative.steamcontroller.LayerOpType
@@ -721,9 +722,10 @@ object SteamControllerProfileImporter {
         val s = group.getObject("settings")
         // Confirmed vdf modes: gyro_to_mouse, gyro_to_joystick(_camera)/_deflection.
         val gate = gyroGate(s)
+        val activation = readGyroActivation(s)
         return when (val mode = group.getString("mode")?.lowercase().orEmpty()) {
             "gyro_to_mouse", "mouse", "absolute_mouse", "mouse_region" ->
-                GyroMode.Mouse((1.0f / 900f) * readSensScale(s), gate)
+                GyroMode.Mouse((1.0f / 900f) * readSensScale(s), gate, activation = activation)
             "gyro_to_joystick", "gyro_to_joystick_camera", "gyro_to_joystick_deflection" -> {
                 // Deflection integrates gyro angle each frame (held position), so its base scale is ~10× smaller than
                 // camera's per-frame rate→deflection to land in the same feel range. Both feel-tuned on-device.
@@ -731,7 +733,7 @@ object SteamControllerProfileImporter {
                 GyroMode.Joystick(
                     stick = if (s?.getString("output_joystick") == "1") Stick.LEFT else Stick.RIGHT,
                     sensitivity = (if (deflection) 1.0f / 60000f else 1.0f / 6000f) * readSensScale(s),
-                    gate = gate, deflection = deflection,
+                    gate = gate, deflection = deflection, activation = activation,
                 )
             }
             "", "disabled" -> GyroMode.None
@@ -749,6 +751,16 @@ object SteamControllerProfileImporter {
     private fun gyroGate(s: VdfObject?): GyroGate {
         val mask = s?.getString("gyro_ratchet_button_mask")?.toLongOrNull() ?: 0L
         return if (mask != 0L && (mask and GYRO_TOUCH_MASK) != 0L) GyroGate.ANY_TOUCH else GyroGate.EITHER_GRIP
+    }
+
+    /** Gyro Enable/Suppress/Toggle from Steam `gyro_button`. ponytail: the int→mode map is PROVISIONAL — captures show
+     *  1/2/6 but none is a labeled Enable/Suppress/Toggle export, so we use the natural UI order 1=Enable / 2=Suppress /
+     *  3=Toggle and fall back to ENABLE for absent/0/unknown (matches the old "gate = enable-while-held" behavior).
+     *  Confirm against a single-setting export; the mechanism itself is validated on-device. */
+    private fun readGyroActivation(s: VdfObject?): GyroActivation = when (s?.getString("gyro_button")?.toIntOrNull()) {
+        2 -> GyroActivation.SUPPRESS
+        3 -> GyroActivation.TOGGLE
+        else -> GyroActivation.ENABLE
     }
 
     // ---- per-group tunable settings -> existing model fields (the common ones; the long tail is step 3/7) ----

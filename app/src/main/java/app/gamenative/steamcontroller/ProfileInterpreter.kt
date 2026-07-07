@@ -133,6 +133,9 @@ class ProfileInterpreter(
     // Held stick position for GyroMode.Joystick(deflection=true): integrated gyro angle, reset when the gate closes.
     private var gyroDefX = 0f
     private var gyroDefY = 0f
+    // GyroActivation.TOGGLE state: persistent on/off flipped on each gate press edge.
+    private var gyroToggleOn = false
+    private var gyroTogglePrevOpen = false
 
     // ---- timed scheduler (per-binding delays + macro playback) ----
     // A queue of press/release ops due at an absolute clock time. Drained each frame. Keys/mouse go straight to the
@@ -1059,10 +1062,26 @@ class ProfileInterpreter(
             s.has(TritonProtocol.BTN_LSTICK_TOUCH) && s.has(TritonProtocol.BTN_RSTICK_TOUCH)
     }
 
+    /** Whether the gyro is aiming this frame, combining the [gate] input with its [activation] behavior:
+     *  ENABLE = while held, SUPPRESS = while NOT held, TOGGLE = flip on each press edge. */
+    private fun gyroActive(gate: GyroGate, activation: GyroActivation, s: TritonState): Boolean {
+        val open = gyroGateOpen(gate, s)
+        return when (activation) {
+            GyroActivation.ENABLE -> open
+            // ALWAYS has no gate button, so "suppress" has nothing to suppress with → gyro just stays on.
+            GyroActivation.SUPPRESS -> gate == GyroGate.ALWAYS || !open
+            GyroActivation.TOGGLE -> {
+                if (open && !gyroTogglePrevOpen) gyroToggleOn = !gyroToggleOn // flip on the press edge
+                gyroTogglePrevOpen = open
+                gyroToggleOn
+            }
+        }
+    }
+
     private fun applyGyro(mode: GyroMode, s: TritonState) {
         when (mode) {
             is GyroMode.Mouse -> {
-                if (gyroGateOpen(mode.gate, s)) {
+                if (gyroActive(mode.gate, mode.activation, s)) {
                     // Natural default: yaw-right → aim-right, pitch-up → aim-up (negate the raw sign, which felt
                     // backwards on device). invertX/invertY flip each axis back.
                     val sx = if (mode.invertX) 1f else -1f
@@ -1076,7 +1095,7 @@ class ProfileInterpreter(
                 // ADDED on top of any physical stick when gated open (so gyro layers onto stick-look rather than
                 // fighting it); no-op when gated closed. Camera = rate→deflection (returns to center at rest);
                 // deflection = integrated angle→held position (stays put until you rotate back).
-                val open = gyroGateOpen(mode.gate, s)
+                val open = gyroActive(mode.gate, mode.activation, s)
                 val sx = if (mode.invertX) 1f else -1f
                 val sy = if (mode.invertY) 1f else -1f
                 val x: Float; val y: Float

@@ -57,6 +57,31 @@ class AdvancedModesTest {
     }
 
     @Test
+    fun `gyro toggle activation flips aim on each grip press edge`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.RIGHT_GRIP, activation = GyroActivation.TOGGLE)), haptics = null)
+        val grip = TritonState().apply { gyroZ = 500; buttons = TritonProtocol.BTN_RGRIP }
+        val noGrip = TritonState().apply { gyroZ = 500 }
+        interp.apply(grip)   // press edge -> toggle ON -> aims
+        val a = sink.mouseMoves; assertTrue("toggle on aims", a > 0)
+        interp.apply(noGrip) // released but still ON -> keeps aiming (hands-free)
+        val b = sink.mouseMoves; assertTrue("stays on after release", b > a)
+        interp.apply(grip)   // press edge -> toggle OFF
+        interp.apply(noGrip)
+        assertEquals("no aim after toggle off", b, sink.mouseMoves)
+    }
+
+    @Test
+    fun `gyro suppress activation aims only while the grip is NOT held`() {
+        val sink = RecordingSink()
+        val interp = ProfileInterpreter(sink, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.RIGHT_GRIP, activation = GyroActivation.SUPPRESS)), haptics = null)
+        interp.apply(TritonState().apply { gyroZ = 500 })            // grip not held -> active
+        val a = sink.mouseMoves; assertTrue("suppress: aims when released", a > 0)
+        interp.apply(TritonState().apply { gyroZ = 500; buttons = TritonProtocol.BTN_RGRIP }) // held -> suppressed
+        assertEquals("suppress: no aim while held", a, sink.mouseMoves)
+    }
+
+    @Test
     fun `gyro mouse uses the natural direction and per-axis invert`() {
         val nat = RecordingSink()
         ProfileInterpreter(nat, ScProfile(gyro = GyroMode.Mouse(sensitivity = 5f, gate = GyroGate.ALWAYS)), haptics = null)

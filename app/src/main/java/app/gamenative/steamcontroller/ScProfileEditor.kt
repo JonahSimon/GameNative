@@ -410,15 +410,18 @@ data class EditGyro(
     val outputStick: String = "RIGHT",
     /** For JOYSTICK: deflection style (angle→held position) vs the default camera style (rate→velocity). */
     val deflection: Boolean = false,
+    /** GyroActivation name (ENABLE / SUPPRESS / TOGGLE) — what the gate button does. */
+    val activation: String = "ENABLE",
 ) {
     private fun gateEnum() = runCatching { GyroGate.valueOf(gate) }.getOrDefault(GyroGate.EITHER_GRIP)
+    private fun activationEnum() = runCatching { GyroActivation.valueOf(activation) }.getOrDefault(GyroActivation.ENABLE)
     fun toRuntime(): GyroMode = when (mode) {
         GyroEditMode.OFF -> GyroMode.None
-        GyroEditMode.MOUSE -> GyroMode.Mouse(sensitivity = DEFAULT_GYRO_SENS * sensitivityPct / 100f, gate = gateEnum())
+        GyroEditMode.MOUSE -> GyroMode.Mouse(sensitivity = DEFAULT_GYRO_SENS * sensitivityPct / 100f, gate = gateEnum(), activation = activationEnum())
         GyroEditMode.JOYSTICK -> GyroMode.Joystick(
             stick = runCatching { Stick.valueOf(outputStick) }.getOrDefault(Stick.RIGHT),
             sensitivity = (if (deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * sensitivityPct / 100f,
-            gate = gateEnum(), deflection = deflection,
+            gate = gateEnum(), deflection = deflection, activation = activationEnum(),
         )
     }
 
@@ -427,9 +430,9 @@ data class EditGyro(
         const val DEFAULT_GYRO_JOY_SENS = 1f / 6000f // camera: gyro rate → stick deflection
         const val DEFAULT_GYRO_DEFLECT_SENS = 1f / 60000f // deflection: integrated angle → held position
         fun from(m: GyroMode): EditGyro = when (m) {
-            is GyroMode.Joystick -> EditGyro(GyroEditMode.JOYSTICK, sensitivityPct = (m.sensitivity / (if (m.deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * 100f).roundToInt(), gate = m.gate.name, outputStick = m.stick.name, deflection = m.deflection)
+            is GyroMode.Joystick -> EditGyro(GyroEditMode.JOYSTICK, sensitivityPct = (m.sensitivity / (if (m.deflection) DEFAULT_GYRO_DEFLECT_SENS else DEFAULT_GYRO_JOY_SENS) * 100f).roundToInt(), gate = m.gate.name, outputStick = m.stick.name, deflection = m.deflection, activation = m.activation.name)
             is GyroMode.None -> EditGyro(GyroEditMode.OFF)
-            is GyroMode.Mouse -> EditGyro(GyroEditMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_SENS * 100f).roundToInt(), gate = m.gate.name)
+            is GyroMode.Mouse -> EditGyro(GyroEditMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_GYRO_SENS * 100f).roundToInt(), gate = m.gate.name, activation = m.activation.name)
         }
     }
 }
