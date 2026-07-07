@@ -36,6 +36,15 @@ class QuickMenuNavTest {
     }
 
     @Test
+    fun `Y sends the HELP nav intent while a menu is captured`() {
+        val bridge = FakeBridge(capturing = true)
+        val i = interp(bridge)
+        i.apply(TritonState())
+        i.apply(TritonState().apply { buttons = TritonProtocol.BTN_Y }) // rising edge
+        assertTrue("Y -> HELP nav", bridge.navs.contains(ScNavKey.HELP))
+    }
+
+    @Test
     fun `nav cursor is hidden when menu capture ends`() {
         val bridge = FakeBridge(capturing = true)
         val i = interp(bridge)

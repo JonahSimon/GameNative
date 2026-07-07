@@ -2295,6 +2295,7 @@ fun XServerScreen(
                                     // Bumpers -> tab prev/next; the command picker listens for L1/R1 to flip tabs.
                                     app.gamenative.steamcontroller.ScNavKey.TAB_PREV -> KeyEvent.KEYCODE_BUTTON_L1
                                     app.gamenative.steamcontroller.ScNavKey.TAB_NEXT -> KeyEvent.KEYCODE_BUTTON_R1
+                                    app.gamenative.steamcontroller.ScNavKey.HELP -> KeyEvent.KEYCODE_BUTTON_Y // Y = Help
                                     else -> KeyEvent.KEYCODE_DPAD_CENTER  // SELECT
                                 }
                                 // Compose's focus system does its own DPAD focus traversal + DPAD_CENTER activation,

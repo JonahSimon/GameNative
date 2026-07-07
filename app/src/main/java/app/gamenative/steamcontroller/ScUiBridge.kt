@@ -35,7 +35,7 @@ interface ScUiBridge {
 /** Direction/selection intents emitted by the interpreter while a menu is captured; mapped to Android d-pad,
  *  DPAD_CENTER and back keycodes by the bridge implementation. [TAB_PREV]/[TAB_NEXT] (bumpers) flip between the
  *  command-picker tabs (Keyboard / Numpad / Mouse / Gamepad / …). */
-enum class ScNavKey { UP, DOWN, LEFT, RIGHT, SELECT, BACK, TAB_PREV, TAB_NEXT }
+enum class ScNavKey { UP, DOWN, LEFT, RIGHT, SELECT, BACK, TAB_PREV, TAB_NEXT, HELP }
 
 /** No-op bridge: no overlay attached / headless tests. */
 object NoOpScUiBridge : ScUiBridge {

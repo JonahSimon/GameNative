@@ -436,6 +436,8 @@ class ProfileInterpreter(
         // Bumpers flip between command-picker tabs (Keyboard / Numpad / Mouse / Gamepad / …).
         if (rising(s, TritonProtocol.BTN_LBUMPER)) uiBridge.nav(ScNavKey.TAB_PREV)
         if (rising(s, TritonProtocol.BTN_RBUMPER)) uiBridge.nav(ScNavKey.TAB_NEXT)
+        // Y = Help. (Part of the fixed menu-nav vocabulary — see the "standard non-editable QuickMenu nav" backlog item.)
+        if (rising(s, TritonProtocol.BTN_Y)) uiBridge.nav(ScNavKey.HELP)
 
         // Right trackpad = pad-mouse cursor over the dialog (the additive Steam-Controller nav option). Runs alongside
         // d-pad nav so either works; complex editor screens are usable by pointing + clicking instead of tab-focusing.
