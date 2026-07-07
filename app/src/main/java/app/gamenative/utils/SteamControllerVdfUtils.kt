@@ -753,13 +753,14 @@ object SteamControllerProfileImporter {
         return if (mask != 0L && (mask and GYRO_TOUCH_MASK) != 0L) GyroGate.ANY_TOUCH else GyroGate.EITHER_GRIP
     }
 
-    /** Gyro Enable/Suppress/Toggle from Steam `gyro_button`. ponytail: the int→mode map is PROVISIONAL — captures show
-     *  1/2/6 but none is a labeled Enable/Suppress/Toggle export, so we use the natural UI order 1=Enable / 2=Suppress /
-     *  3=Toggle and fall back to ENABLE for absent/0/unknown (matches the old "gate = enable-while-held" behavior).
-     *  Confirm against a single-setting export; the mechanism itself is validated on-device. */
-    private fun readGyroActivation(s: VdfObject?): GyroActivation = when (s?.getString("gyro_button")?.toIntOrNull()) {
-        2 -> GyroActivation.SUPPRESS
-        3 -> GyroActivation.TOGGLE
+    /** Gyro Enable/Suppress/Toggle mode. CONFIRMED from labeled Steam exports (testGyroEnable/Suppress/Toggle, controlled
+     *  same-group diff 2026-07-07): the mode is `gyro_button_invert` — **absent = Enable, "0" = Suppress, "2" = Toggle**
+     *  (value 1 unobserved). NOTE `gyro_button` is NOT the mode (it reads "1" for all three); the button *chord* is
+     *  `gyro_ratchet_button_mask` (→ the gate). ponytail: some base templates also write `gyro_button_invert "0"`, so a
+     *  stray "0" could read as Suppress — acceptable (rare, cheap to revisit) and it faithfully imports the labeled set. */
+    private fun readGyroActivation(s: VdfObject?): GyroActivation = when (s?.getString("gyro_button_invert")) {
+        "2" -> GyroActivation.TOGGLE
+        "0" -> GyroActivation.SUPPRESS
         else -> GyroActivation.ENABLE
     }
 

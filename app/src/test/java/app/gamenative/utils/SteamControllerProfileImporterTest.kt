@@ -271,18 +271,20 @@ class SteamControllerProfileImporterTest {
     }
 
     @Test
-    fun `gyro_button decodes the enable-suppress-toggle activation`() {
-        fun gyroFor(button: String): GyroMode {
+    fun `gyro_button_invert decodes the enable-suppress-toggle activation`() {
+        // Values confirmed from labeled Steam exports (testGyroEnable/Suppress/Toggle): absent=Enable, "0"=Suppress,
+        // "2"=Toggle. `gyro_button` reads "1" for all three, so it is NOT the mode (regression: don't read it).
+        fun gyroFor(settings: String): GyroMode {
             val vdf = """
                 "controller_mappings" { "version" "3" "controller_type" "controller_triton"
-                  "group" { "id" "0" "mode" "gyro_to_mouse" "inputs" {} "settings" { "gyro_button" "$button" } }
+                  "group" { "id" "0" "mode" "gyro_to_mouse" "inputs" {} "settings" { $settings } }
                   "preset" { "id" "0" "name" "Default" "group_source_bindings" { "0" "gyro active" } } }
             """.trimIndent()
             return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().gyro
         }
-        assertEquals(GyroActivation.SUPPRESS, (gyroFor("2") as GyroMode.Mouse).activation)
-        assertEquals(GyroActivation.TOGGLE, (gyroFor("3") as GyroMode.Mouse).activation)
-        assertEquals(GyroActivation.ENABLE, (gyroFor("1") as GyroMode.Mouse).activation) // 1/absent -> enable
+        assertEquals(GyroActivation.ENABLE, (gyroFor(""" "gyro_button" "1" """) as GyroMode.Mouse).activation) // absent invert
+        assertEquals(GyroActivation.SUPPRESS, (gyroFor(""" "gyro_button_invert" "0" """) as GyroMode.Mouse).activation)
+        assertEquals(GyroActivation.TOGGLE, (gyroFor(""" "gyro_button_invert" "2" """) as GyroMode.Mouse).activation)
     }
 
     @Test
