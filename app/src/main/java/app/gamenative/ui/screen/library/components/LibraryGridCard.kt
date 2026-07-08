@@ -58,6 +58,7 @@ import app.gamenative.data.GameSource
 import app.gamenative.data.LibraryItem
 import app.gamenative.ui.component.CompatibilityBadge
 import app.gamenative.ui.component.GameStatsRow
+import app.gamenative.ui.component.focusRing
 import app.gamenative.ui.data.GameCardStats
 import app.gamenative.ui.enums.PaneType
 import app.gamenative.ui.theme.PluviaTheme
@@ -90,6 +91,7 @@ internal fun GridViewCard(
     gameStats: GameCardStats?,
     showFocusGlow: Boolean,
     context: Context,
+    animateStats: Boolean = true,
 ) {
     val aspectRatio = if (paneType == PaneType.GRID_CAPSULE) 2f / 3f else 460f / 215f
     val isCapsule = paneType == PaneType.GRID_CAPSULE
@@ -119,27 +121,22 @@ internal fun GridViewCard(
     } else {
         Modifier
     }
-    val focusBorderBrush = Brush.verticalGradient(
-        colors = listOf(
-            MaterialTheme.colorScheme.primary,
-            MaterialTheme.colorScheme.tertiary,
-        ),
-    )
+    val cardShape = RoundedCornerShape(12.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val isItemFocused by interactionSource.collectIsFocusedAsState()
+
+    LaunchedEffect(isItemFocused) {
+        onFocusChanged(isItemFocused)
+        if (isItemFocused) onFocus()
+    }
 
     Box(
         modifier = modifier
             .padding(vertical = 4.dp)
             .scale(scale)
-            .then(focusHaloModifier),
+            .then(focusHaloModifier)
+            .focusRing(interactionSource, cardShape),
     ) {
-        val interactionSource = remember { MutableInteractionSource() }
-        val isItemFocused by interactionSource.collectIsFocusedAsState()
-
-        LaunchedEffect(isItemFocused) {
-            onFocusChanged(isItemFocused)
-            if (isItemFocused) onFocus()
-        }
-
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -149,12 +146,11 @@ internal fun GridViewCard(
                     interactionSource = interactionSource,
                     indication = null,
                 ),
-            shape = RoundedCornerShape(12.dp),
+            shape = cardShape,
             colors = CardDefaults.cardColors(
                 containerColor = Color.Transparent,
             ),
             border = when {
-                isFocused -> BorderStroke(2.dp, focusBorderBrush)
                 appInfo.isRecommended -> BorderStroke(
                     1.dp,
                     MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
@@ -164,13 +160,19 @@ internal fun GridViewCard(
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 // Game image (primary + optional fallback for Steam header/hero)
-                val imageUrls by produceState(
-                    initialValue = GridImageUrls("", ""),
-                    key1 = appInfo.appId,
-                    key2 = paneType,
-                    key3 = imageRefreshCounter,
-                ) {
-                    value = withContext(Dispatchers.IO) {
+                val imageUrls = if (appInfo.gameSource == GameSource.CUSTOM_GAME) {
+                    produceState(
+                        initialValue = GridImageUrls("", ""),
+                        key1 = appInfo.appId,
+                        key2 = paneType,
+                        key3 = imageRefreshCounter,
+                    ) {
+                        value = withContext(Dispatchers.IO) {
+                            getGridImageUrl(context, appInfo, paneType)
+                        }
+                    }.value
+                } else {
+                    remember(appInfo.appId, paneType, imageRefreshCounter) {
                         getGridImageUrl(context, appInfo, paneType)
                     }
                 }
@@ -285,6 +287,7 @@ internal fun GridViewCard(
                         stats = gameStats,
                         tint = Color.White.copy(alpha = 0.55f),
                         onDark = true,
+                        animate = animateStats,
                     )
                 }
 

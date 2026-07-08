@@ -194,6 +194,10 @@ public abstract class ProcessHelper {
     //                         the main thread reads stdout. This keeps stdout clean for callers
     //                         such as SteamTokenLogin
     public static String execWithOutput(String command, String[] envp, File workingDir, boolean includeStderr) {
+        return execWithOutput(command, envp, workingDir, includeStderr, -1);
+    }
+
+    public static String execWithOutput(String command, String[] envp, File workingDir, boolean includeStderr, int timeoutSeconds) {
         StringBuilder output = new StringBuilder();
         final StringBuilder stdoutBuf = new StringBuilder();
         final StringBuilder stderrBuf = new StringBuilder();
@@ -205,7 +209,7 @@ public abstract class ProcessHelper {
             if (BuildConfig.DEBUG) {
                 Log.d("ProcessHelper", "Executing with output: " + Arrays.toString(splitCommand(command)) + ", " + Arrays.toString(envp) + ", " + workingDir);
             }
-            
+
             ProcessBuilder pb = new ProcessBuilder(splitCommand(command));
             Map<String, String> env = pb.environment();
             env.clear();
@@ -241,11 +245,33 @@ public abstract class ProcessHelper {
             stderrDrainer.setDaemon(true);
             stderrDrainer.start();
 
-            process.waitFor();
+            if (timeoutSeconds > 0) {
+                boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+                if (!finished) {
+                    process.destroyForcibly();
+                    try {
+                        process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    output.append("Error: Process timeout after ").append(timeoutSeconds).append(" seconds");
+                }
+            } else {
+                process.waitFor();
+            }
+
             try { stdoutStream.close(); } catch (IOException ignored) {}
             try { stderrStream.close(); } catch (IOException ignored) {}
+
             stdoutDrainer.join(5_000);
+            if (stdoutDrainer.isAlive()) {
+                stdoutDrainer.interrupt();
+            }
+
             stderrDrainer.join(5_000);
+            if (stderrDrainer.isAlive()) {
+                stderrDrainer.interrupt();
+            }
 
             output.append(stdoutBuf);
             if (includeStderr) output.append(stderrBuf);

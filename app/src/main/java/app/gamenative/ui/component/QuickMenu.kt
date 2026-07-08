@@ -1232,24 +1232,6 @@ private fun QuickMenuCloseButton(
     Box(
         modifier = modifier
             .size(44.dp)
-            .then(
-                if (isFocused) {
-                    Modifier.border(
-                        BorderStroke(
-                            2.dp,
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.tertiary,
-                                ),
-                            ),
-                        ),
-                        shape,
-                    )
-                } else {
-                    Modifier
-                }
-            )
             .clip(shape)
             .background(
                 if (isFocused) {
@@ -1258,6 +1240,7 @@ private fun QuickMenuCloseButton(
                     Color.Transparent
                 },
             )
+            .focusRing(interactionSource, shape, width = 2.dp)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -1296,24 +1279,6 @@ private fun QuickMenuTabButton(
     Box(
         modifier = modifier
             .size(56.dp)
-            .then(
-                if (isFocused) {
-                    Modifier.border(
-                        BorderStroke(
-                            2.dp,
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.tertiary,
-                                ),
-                            ),
-                        ),
-                        shape,
-                    )
-                } else {
-                    Modifier
-                }
-            )
             .clip(shape)
             .background(
                 when {
@@ -1322,6 +1287,7 @@ private fun QuickMenuTabButton(
                     else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                 },
             )
+            .focusRing(interactionSource, shape, width = 2.dp)
             .then(
                 if (focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
@@ -1984,24 +1950,6 @@ private fun QuickMenuItemRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (isFocused && isEnabled) {
-                    Modifier.border(
-                        BorderStroke(
-                            2.dp,
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.tertiary,
-                                ),
-                            ),
-                        ),
-                        shape,
-                    )
-                } else {
-                    Modifier
-                }
-            )
             .clip(shape)
             .then(
                 if (isFocused && isEnabled) {
@@ -2013,6 +1961,13 @@ private fun QuickMenuItemRow(
                             ),
                         ),
                     )
+                } else {
+                    Modifier
+                }
+            )
+            .then(
+                if (isEnabled) {
+                    Modifier.focusRing(interactionSource, shape, width = 2.dp)
                 } else {
                     Modifier
                 }
