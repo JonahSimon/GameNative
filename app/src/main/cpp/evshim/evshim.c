@@ -75,7 +75,6 @@ static int vjoy_ids[MAX_GAMEPADS];
 static SDL_Joystick *vjoy_handles[MAX_GAMEPADS];
 static size_t g_shm_map_size = 0;
 static int g_is_wine = 0;
-static pthread_mutex_t sdl_vjoy_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void build_gamepad_dir(char *out, size_t size)
 {
@@ -243,10 +242,8 @@ static int attach_vjoy(int idx)
     d.axis_mask = 0x3F;
     d.name = "Xbox 360 Controller";
 
-    pthread_mutex_lock(&sdl_vjoy_lock);
     vjoy_ids[idx] = p_SDL_JoystickAttachVirtualEx(&d);
     if (vjoy_ids[idx] < 0) {
-        pthread_mutex_unlock(&sdl_vjoy_lock);
         LOGE("evshim: P%d SDL attach failed: %s\n", idx, p_SDL_GetError());
         return -1;
     }
@@ -256,10 +253,8 @@ static int attach_vjoy(int idx)
         LOGE("evshim: P%d SDL_JoystickOpen failed\n", idx);
         p_SDL_JoystickDetachVirtual(vjoy_ids[idx]);
         vjoy_ids[idx] = -1;
-        pthread_mutex_unlock(&sdl_vjoy_lock);
         return -1;
     }
-    pthread_mutex_unlock(&sdl_vjoy_lock);
 
     LOGI("evshim: P%d virtual joystick id=%d connected\n", idx, vjoy_ids[idx]);
     return 0;
@@ -267,7 +262,6 @@ static int attach_vjoy(int idx)
 
 static void detach_vjoy(int idx)
 {
-    pthread_mutex_lock(&sdl_vjoy_lock);
     if (vjoy_handles[idx]) {
         p_SDL_JoystickClose(vjoy_handles[idx]);
         vjoy_handles[idx] = NULL;
@@ -277,7 +271,6 @@ static void detach_vjoy(int idx)
         LOGI("evshim: P%d virtual joystick id=%d disconnected\n", idx, vjoy_ids[idx]);
         vjoy_ids[idx] = -1;
     }
-    pthread_mutex_unlock(&sdl_vjoy_lock);
 }
 
 static void set_vjoy_connected(int idx, int connected)
