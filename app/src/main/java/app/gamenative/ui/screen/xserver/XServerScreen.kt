@@ -2635,46 +2635,7 @@ fun XServerScreen(
                         // Wait for view to be laid out before loading elements
                         PluviaApp.inputControlsView?.let { icView ->
                             icView.post {
-                                // Load Profile 0 elements (with valid dimensions)
-                                profile.loadElements(icView)
-
-                                // Clear current profile elements and copy from Profile 0
-                                val elementsToRemove = currentProfile.elements.toList()
-                                elementsToRemove.forEach { currentProfile.removeElement(it) }
-
-                                profile.elements.forEach { element ->
-                                    val newElement = com.winlator.inputcontrols.ControlElement(icView)
-                                    newElement.setType(element.type)
-                                    newElement.setShape(element.shape)
-                                    newElement.setX(element.x.toInt())
-                                    newElement.setY(element.y.toInt())
-                                    newElement.setScale(element.scale)
-                                    newElement.setText(element.text)
-                                    newElement.setIconId(element.iconId.toInt())
-                                    newElement.setToggleSwitch(element.isToggleSwitch)
-                                    // Copy range button properties — must set binding count
-                                    // BEFORE copying bindings, because setBindingCount resets
-                                    // the bindings array to NONE.
-                                    if (element.type == com.winlator.inputcontrols.ControlElement.Type.RANGE_BUTTON) {
-                                        newElement.setRange(element.range)
-                                        newElement.setOrientation(element.orientation)
-                                        newElement.setBindingCount(element.bindingCount)
-                                        newElement.isScrollLocked = element.isScrollLocked
-                                    }
-                                    for (i in 0 until element.bindingCount) {
-                                        newElement.setBindingAt(i, element.getBindingAt(i))
-                                    }
-                                    // Copy shooter mode properties
-                                    if (element.type == com.winlator.inputcontrols.ControlElement.Type.SHOOTER_MODE) {
-                                        newElement.shooterMovementType = element.shooterMovementType
-                                        newElement.shooterLookType = element.shooterLookType
-                                        newElement.shooterLookSensitivity = element.shooterLookSensitivity
-                                        newElement.shooterJoystickSize = element.shooterJoystickSize
-                                    }
-                                    currentProfile.addElement(newElement)
-                                }
-
-                                icView.invalidate()
+                                copyInputControlsProfileElements(profile, currentProfile, icView)
                                 SnackbarManager.show(context.getString(R.string.toast_controls_reset))
                             }
                         }
@@ -3973,8 +3934,7 @@ private fun getWineStartCommand(
         // Get Epic launch parameters
         Timber.tag("XServerScreen").d("Building Epic launch parameters for ${game.appName}...")
         val runArguments: List<String> = runBlocking {
-            val offlineLaunch = offline || container.isEpicOfflineMode;
-            val result = EpicService.buildLaunchParameters(context, container, game, offlineLaunch)
+            val result = EpicService.buildLaunchParameters(context, container, game, container.isEpicOfflineMode)
             if (result.isFailure) {
                 Timber.tag("XServerScreen").e(result.exceptionOrNull(), "Failed to build Epic launch parameters")
             }
