@@ -112,6 +112,7 @@ object QuickMenuAction {
     const val SC_LAYOUT = 12
     // Single root entry that opens the Steam Controller editor hub (lists the editors above).
     const val SC_ROOT = 13
+    const val SHOOTER_MODE = 10
 }
 
 private object QuickMenuTab {
@@ -262,6 +263,8 @@ fun QuickMenu(
     isSteamControllerLive: Boolean = false,
     isTouchscreenModeActive: Boolean = false,
     onTouchGestureSettingsClick: () -> Unit = {},
+    isShooterModeActive: Boolean = false,
+    onShooterModeSettingsClick: () -> Unit = {},
     activeToggleIds: Set<Int> = emptySet(),
     // LSFG hot-reload state (tab only visible when isLsfgAvailable)
     isLsfgAvailable: Boolean = false,
@@ -334,6 +337,14 @@ fun QuickMenu(
                 id = QuickMenuAction.TOUCHSCREEN_MODE,
                 icon = Icons.Default.Fingerprint,
                 labelResId = R.string.touchscreen_mode,
+                accentColor = PluviaTheme.colors.accentPurple,
+            )
+        )
+        add(
+            QuickMenuItem(
+                id = QuickMenuAction.SHOOTER_MODE,
+                icon = Icons.Default.Gamepad,
+                labelResId = R.string.shooter_mode_toggle,
                 accentColor = PluviaTheme.colors.accentPurple,
             )
         )
@@ -674,9 +685,20 @@ fun QuickMenu(
                                                     },
                                                     focusRequester = if (index == 0) controllerItemFocusRequester else null,
                                                     secondaryIcon = if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && isTouchscreenModeActive)
-                                                        Icons.Default.Settings else null,
+                                                        Icons.Default.Settings
+                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && isShooterModeActive)
+                                                        Icons.Default.Settings
+                                                    else null,
+                                                    secondaryContentDescriptionResId = if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && isTouchscreenModeActive)
+                                                        R.string.gesture_settings_title
+                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && isShooterModeActive)
+                                                        R.string.shooter_mode_settings_title
+                                                    else null,
                                                     onSecondaryClick = if (item.id == QuickMenuAction.TOUCHSCREEN_MODE && isTouchscreenModeActive)
-                                                        onTouchGestureSettingsClick else null,
+                                                        onTouchGestureSettingsClick
+                                                    else if (item.id == QuickMenuAction.SHOOTER_MODE && isShooterModeActive)
+                                                        onShooterModeSettingsClick
+                                                    else null,
                                                 )
                                             }
                                         }
@@ -1928,6 +1950,7 @@ private fun QuickMenuItemRow(
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
     secondaryIcon: ImageVector? = null,
+    secondaryContentDescriptionResId: Int? = null,
     onSecondaryClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -2043,7 +2066,9 @@ private fun QuickMenuItemRow(
             ) {
                 Icon(
                     imageVector = secondaryIcon,
-                    contentDescription = stringResource(R.string.gesture_settings_title),
+                    contentDescription = stringResource(
+                        secondaryContentDescriptionResId ?: R.string.gesture_settings_title,
+                    ),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )

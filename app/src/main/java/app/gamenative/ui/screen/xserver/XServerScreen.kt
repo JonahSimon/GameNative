@@ -88,6 +88,7 @@ import app.gamenative.data.GameSource
 import app.gamenative.gamefixes.GameFixesRegistry
 import app.gamenative.data.LaunchInfo
 import app.gamenative.data.LibraryItem
+import app.gamenative.data.ShooterModeConfig
 import app.gamenative.data.SteamApp
 import app.gamenative.events.AndroidEvent
 import app.gamenative.events.SteamEvent
@@ -119,6 +120,7 @@ import app.gamenative.utils.CustomGameScanner
 import app.gamenative.utils.ExecutableSelectionUtils
 import app.gamenative.utils.LsfgQuickMenuHelper
 import app.gamenative.utils.ManifestComponentHelper
+import app.gamenative.utils.launchdependencies.BionicSteamAssetsDependency
 import app.gamenative.utils.downloader.DXWrapperDownloader
 import app.gamenative.utils.downloader.GraphicsDriverDownloader
 import app.gamenative.utils.PreInstallSteps
@@ -490,9 +492,14 @@ fun XServerScreen(
     var showPlayingBlockedDialog by rememberSaveable { mutableStateOf(false) }
     var playingBlockedRemoteName by rememberSaveable { mutableStateOf<String?>(null) }
     var showTouchGestureDialog by remember { mutableStateOf(false) }
+    var showShooterModeDialog by remember(container.id) { mutableStateOf(false) }
     var isTouchscreenModeActive by remember { mutableStateOf(container.isTouchscreenMode) }
+    var isShooterModeActive by remember(container.id) { mutableStateOf(container.isShooterMode) }
     var currentGestureConfig by remember {
         mutableStateOf(app.gamenative.data.TouchGestureConfig.fromJson(container.getGestureConfig()))
+    }
+    var currentShooterConfig by remember(container.id) {
+        mutableStateOf(ShooterModeConfig.fromJson(container.getShooterConfig()))
     }
     fun shouldShowMouseCursor(): Boolean {
         return !container.isDisableMouseInput &&
@@ -1216,6 +1223,31 @@ fun XServerScreen(
                         }
                     }
                 }
+                false
+            }
+
+            QuickMenuAction.SHOOTER_MODE -> {
+                val newMode = !container.isShooterMode
+                container.setShooterMode(newMode)
+                container.saveData()
+                isShooterModeActive = newMode
+                if (newMode && !areControlsVisible) {
+                    val manager = PluviaApp.inputControlsManager
+                    val profiles = manager?.getProfiles(false) ?: listOf()
+                    val winHandler = xServerView?.getxServer()?.winHandler
+                    if (profiles.isNotEmpty() && winHandler != null) {
+                        val profileId = container.getExtra("profileId", "0").toIntOrNull() ?: 0
+                        val targetProfile = if (profileId != 0) {
+                            manager?.getProfile(profileId)
+                        } else {
+                            null
+                        } ?: manager?.getProfile(0) ?: profiles.getOrNull(2) ?: profiles.first()
+                        showInputControls(targetProfile, winHandler, container)
+                        areControlsVisible = true
+                    }
+                }
+                PluviaApp.inputControlsView?.setContainerShooterMode(newMode)
+                PluviaApp.inputControlsView?.setShooterModeConfig(currentShooterConfig)
                 false
             }
 
@@ -2326,6 +2358,7 @@ fun XServerScreen(
 
                 // Set container-level shooter mode
                 setContainerShooterMode(container.isShooterMode)
+                setShooterModeConfig(currentShooterConfig)
             }
             PluviaApp.inputControlsView = icView
 
@@ -2683,9 +2716,12 @@ fun XServerScreen(
             isSteamControllerLive = tritonMapper?.transportReady == true,
             isTouchscreenModeActive = isTouchscreenModeActive,
             onTouchGestureSettingsClick = { showTouchGestureDialog = true },
+            isShooterModeActive = isShooterModeActive,
+            onShooterModeSettingsClick = { showShooterModeDialog = true },
             activeToggleIds = buildSet {
                 if (areControlsVisible) add(QuickMenuAction.INPUT_CONTROLS)
                 if (isTouchscreenModeActive) add(QuickMenuAction.TOUCHSCREEN_MODE)
+                if (isShooterModeActive) add(QuickMenuAction.SHOOTER_MODE)
                 if (isDisableMouseInput) add(QuickMenuAction.DISABLE_MOUSE)
             },
             // LSFG hot-reload (tab only visible when enabled in container settings)
@@ -2777,6 +2813,24 @@ fun XServerScreen(
                 PluviaApp.touchpadView?.setGestureConfig(newConfig)
                 applyMouseCursorVisibility()
                 showTouchGestureDialog = false
+            },
+        )
+    }
+
+    if (showShooterModeDialog) {
+        app.gamenative.ui.component.dialog.ShooterModeSettingsDialog(
+            shooterConfig = currentShooterConfig,
+            defaultJoystickOpacity = PrefManager.getFloat(
+                "controls_opacity",
+                InputControlsView.DEFAULT_OVERLAY_OPACITY,
+            ),
+            onDismiss = { showShooterModeDialog = false },
+            onSave = { newConfig ->
+                currentShooterConfig = newConfig
+                container.setShooterConfig(newConfig.toJson())
+                container.saveData()
+                PluviaApp.inputControlsView?.setShooterModeConfig(newConfig)
+                showShooterModeDialog = false
             },
         )
     }
@@ -3136,6 +3190,8 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
     profile.setVirtualGamepad(true)
 
     PluviaApp.inputControlsView?.let { icView ->
+        icView.setContainerShooterMode(container.isShooterMode)
+        icView.setShooterModeConfigJson(container.getShooterConfig())
         // Check if we need to load/reload elements with valid dimensions
         if (!profile.isElementsLoaded || icView.width == 0 || icView.height == 0) {
             if (icView.width == 0 || icView.height == 0) {
@@ -3149,6 +3205,7 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
                     icView.setVisibility(View.VISIBLE)
                     icView.requestFocus()
                     icView.invalidate()
+                    winHandler.refreshControllerMappings()
                 }
             } else {
                 // View has dimensions but elements not loaded - load them now
@@ -3159,6 +3216,7 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
                 icView.setVisibility(View.VISIBLE)
                 icView.requestFocus()
                 icView.invalidate()
+                winHandler.refreshControllerMappings()
             }
         } else {
             // Elements already loaded with valid dimensions - just show
@@ -3168,6 +3226,7 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
             icView.setVisibility(View.VISIBLE)
             icView.requestFocus()
             icView.invalidate()
+            winHandler.refreshControllerMappings()
         }
     }
 
@@ -3188,9 +3247,7 @@ private fun showInputControls(profile: ControlsProfile, winHandler: WinHandler, 
 
 
         // Tell WinHandler to update its internal state.
-        if (winHandler != null) {
-            winHandler.refreshControllerMappings()
-        }
+        winHandler.refreshControllerMappings()
     }
 }
 
@@ -3198,6 +3255,7 @@ private fun hideInputControls() {
     PluviaApp.inputControlsView?.setShowTouchscreenControls(false)
     PluviaApp.inputControlsView?.setVisibility(View.GONE)
     PluviaApp.inputControlsView?.setProfile(null)
+    PluviaApp.xServerView?.getxServer()?.winHandler?.refreshControllerMappings()
 
     PluviaApp.touchpadView?.setSensitivity(1.0f)
     PluviaApp.touchpadView?.setPointerButtonLeftEnabled(true)
@@ -5573,7 +5631,7 @@ private fun extractSteamFiles(
         }
 
         try {
-            val steamExeSource = File(imageFs.getFilesDir(), "steam.exe")
+            val steamExeSource = File(imageFs.getFilesDir(), BionicSteamAssetsDependency.steamExeAssetFor(container))
             if (!steamExeSource.exists()) {
                 Timber.e("steam.exe cache missing at ${steamExeSource.absolutePath} (expected from BionicSteamAssetsDependency)")
             } else {
@@ -5584,6 +5642,10 @@ private fun extractSteamFiles(
         } catch (e: IOException) {
             Timber.e(e, "Failed to copy cached steam.exe")
         }
+
+        // Re-extract the active Proton's lsteamclient into its tree + prefix every boot,
+        // so switching a container's Proton version can't leave a stale ABI-mismatched build.
+        BionicSteamAssetsDependency.extractLsteamclientIntoPrefix(context, container)
 
         try {
             val accountId = SteamService.userSteamId?.accountID?.toInt() ?: 0
@@ -5605,8 +5667,10 @@ private fun extractSteamFiles(
     }
 
     // Real-Steam mode: extract the full real-Steam tree once; subsequent boots
-    val bionicSteamExe = File(imageFs.getFilesDir(), "steam.exe")
-    val installedIsBionic = bionicSteamExe.exists() && FileUtils.contentEquals(steamExe, bionicSteamExe)
+    val installedIsBionic = BionicSteamAssetsDependency.bionicSteamExeNames().any { name ->
+        val cached = File(imageFs.getFilesDir(), name)
+        cached.exists() && FileUtils.contentEquals(steamExe, cached)
+    }
     if (steamExe.exists() && !installedIsBionic) return
 
     val downloaded = File(imageFs.getFilesDir(), "steam.tzst")

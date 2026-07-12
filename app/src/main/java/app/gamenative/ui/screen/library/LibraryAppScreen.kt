@@ -561,6 +561,7 @@ internal fun AppScreenContent(
     isDownloading: Boolean,
     downloadProgress: Float,
     hasPartialDownload: Boolean,
+    hasLeftoverInstall: Boolean = false,
     isUpdatePending: Boolean,
     downloadInfo: app.gamenative.data.DownloadInfo? = null,
     onDownloadInstallClick: () -> Unit,
@@ -568,7 +569,7 @@ internal fun AppScreenContent(
     onDeleteDownloadClick: () -> Unit,
     onUpdateClick: () -> Unit,
     onBack: () -> Unit = {},
-    vararg optionsMenu: AppMenuOption,
+    optionsMenu: List<AppMenuOption>,
 ) {
     val context = LocalContext.current
     // reactive — recomposes when network state changes
@@ -948,10 +949,10 @@ internal fun AppScreenContent(
                             onClick = { optionsMenuVisible = true },
                         )
 
-                        if (isInstalled || hasPartialDownload) {
+                        if (isInstalled || hasPartialDownload || hasLeftoverInstall) {
                             ActionIconButton(
                                 icon = Icons.Default.Delete,
-                                contentDescription = if (isInstalled) stringResource(R.string.uninstall) else stringResource(R.string.delete_app),
+                                contentDescription = if (isInstalled || hasLeftoverInstall) stringResource(R.string.uninstall) else stringResource(R.string.delete_app),
                                 onClick = onDeleteDownloadClick,
                             )
                         }
@@ -1328,7 +1329,7 @@ private fun Preview_AppScreen() {
                         optionType = it,
                         onClick = { },
                     )
-                }.toTypedArray(),
+                },
             )
         }
     }
