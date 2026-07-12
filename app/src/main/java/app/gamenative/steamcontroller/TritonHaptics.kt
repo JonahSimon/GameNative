@@ -15,10 +15,27 @@ import kotlin.math.abs
 class TritonHaptics(private val writeOut: (ByteArray) -> Unit) {
     companion object {
         const val ID_OUT_HAPTIC_COMMAND = 0x82
+        const val ID_OUT_RUMBLE = 0x80
         const val SIDE_LEFT_PAD = 0
         const val SIDE_RIGHT_PAD = 1
         const val CMD_TICK = 1
         const val CMD_CLICK = 2
+
+        /**
+         * Build the Triton rumble output report (id `0x80`, 10 bytes, `#pragma pack(1)` little-endian) that
+         * drives the two rumble motors. Layout from SDL's `MsgHapticRumble` / `HIDAPI_DriverSteamTriton_Rumble`:
+         * `type`+`intensity` = 0, then per-motor `{ u16 speed; i8 gain }` for left (large / low-freq motor) and
+         * right (small / high-freq motor). We map XInput low/high-freq magnitudes straight to the motor speeds
+         * with 0 dB gain, exactly as SDL does.
+         */
+        fun rumbleReport(lowFreq: Int, highFreq: Int): ByteArray = ByteArray(10).also {
+            it[0] = ID_OUT_RUMBLE.toByte()
+            // [1] type = 0, [2..3] intensity = 0
+            it[4] = (lowFreq and 0xFF).toByte(); it[5] = ((lowFreq ushr 8) and 0xFF).toByte()
+            // [6] left gain = 0
+            it[7] = (highFreq and 0xFF).toByte(); it[8] = ((highFreq ushr 8) and 0xFF).toByte()
+            // [9] right gain = 0
+        }
     }
 
     private fun command(side: Int, cmd: Int, gain: Int): ByteArray =
@@ -26,6 +43,9 @@ class TritonHaptics(private val writeOut: (ByteArray) -> Unit) {
 
     fun click(side: Int, gain: Int) = writeOut(command(side, CMD_CLICK, gain))
     fun tick(side: Int, gain: Int) = writeOut(command(side, CMD_TICK, gain))
+
+    /** Drive the rumble motors from an in-game XInput rumble state (0..0xFFFF per motor). */
+    fun rumble(lowFreq: Int, highFreq: Int) = writeOut(rumbleReport(lowFreq, highFreq))
 
     // per-pad slide accumulator: [touched, lastX, lastY, accum]
     private val pads = arrayOf(PadState(), PadState())

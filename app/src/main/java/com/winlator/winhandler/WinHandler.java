@@ -105,6 +105,14 @@ public class WinHandler {
     private static final int STANDALONE_PHONE_RUMBLE_DURATION_MS = 70;
     private static final int STANDALONE_PHONE_RUMBLE_THROTTLE_MS = 120;
 
+    /**
+     * Optional Steam-Controller rumble tap. A raw BLE Steam Controller is not an Android input device, so game
+     * rumble would otherwise only buzz the phone. When a TritonMapper session is live it sets this so the game's
+     * XInput rumble is forwarded to the controller's own motors instead. Null (default) = unchanged behavior.
+     */
+    public interface RumbleForwarder { void onRumble(short lowFreq, short highFreq); }
+    public static volatile RumbleForwarder scRumbleForwarder = null;
+
     // Add method to set InputControlsView
     public void setInputControlsView(InputControlsView view) {
         this.inputControlsView = view;
@@ -666,6 +674,9 @@ public class WinHandler {
     }
 
     private void startVibration(short lowFreq, short highFreq) {
+        // A live Steam Controller owns rumble output (its own motors); skip the phone/controller fallback.
+        RumbleForwarder fwd = scRumbleForwarder;
+        if (fwd != null) { fwd.onRumble(lowFreq, highFreq); return; }
         // --- Step 1: Calculate the base amplitude once at the top ---
         int unsignedLowFreq = lowFreq & 0xFFFF;
         int unsignedHighFreq = highFreq & 0xFFFF;
@@ -718,6 +729,8 @@ public class WinHandler {
         isRumbling = controllerVibrated || phoneVibrated;
     }
     private void stopVibration() {
+        RumbleForwarder fwd = scRumbleForwarder;
+        if (fwd != null) { fwd.onRumble((short) 0, (short) 0); return; }
         if (!isRumbling) return; // Simplified check
         // Attempt to stop the physical controller's vibration if it exists
         InputDevice device = getCurrentPhysicalControllerDevice();

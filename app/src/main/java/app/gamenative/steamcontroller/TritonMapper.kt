@@ -3,6 +3,7 @@ package app.gamenative.steamcontroller
 import android.content.Context
 import android.os.Handler
 import android.util.Log
+import com.winlator.winhandler.WinHandler
 import com.winlator.xserver.XServer
 
 /**
@@ -34,6 +35,9 @@ class TritonMapper(
         private const val TAG = "TritonMapper"
         private const val MAX_BLE_RETRIES = 4
         private const val BLE_RETRY_MS = 1500L
+        // The controller stops rumbling ~50ms after the last report (firmware safety), so refresh a held
+        // rumble faster than that — matches SDL's TRITON_RUMBLE_RESEND_INTERVAL_MS.
+        private const val RUMBLE_RESEND_MS = 40L
 
         /** The currently-running driver, for the debug live-tune hook ([ScTestReceiver] "tune" mode) to reach the
          *  active interpreter. Set in [start], cleared in [stop]. Null when no game is running. */
@@ -48,6 +52,26 @@ class TritonMapper(
 
     private val bleHandler = Handler(context.mainLooper)
     private var bleRetries = 0
+
+    // Game rumble forwarded from WinHandler's poller (another thread) → the controller's motors. Held on the
+    // main looper alongside every other BLE write. The resend loop refreshes a non-zero rumble before the
+    // firmware's ~50ms cutoff; it stops itself once rumble returns to zero.
+    @Volatile private var rumbleLow = 0
+    @Volatile private var rumbleHigh = 0
+    private val rumbleResend = object : Runnable {
+        override fun run() {
+            if (!running || (rumbleLow == 0 && rumbleHigh == 0)) return
+            haptics?.rumble(rumbleLow, rumbleHigh)
+            bleHandler.postDelayed(this, RUMBLE_RESEND_MS)
+        }
+    }
+
+    private fun onGameRumble(low: Int, high: Int) {
+        val wasActive = rumbleLow != 0 || rumbleHigh != 0
+        rumbleLow = low; rumbleHigh = high
+        haptics?.rumble(low, high)
+        if ((low != 0 || high != 0) && !wasActive) bleHandler.postDelayed(rumbleResend, RUMBLE_RESEND_MS)
+    }
 
     /** True once the BLE transport is live (onReady). The in-game UI gates the rich Steam-Controller editing
      *  section on this — GameNative's generic controller detector can't see the BLE Triton. */
@@ -76,6 +100,10 @@ class TritonMapper(
         interpreter = interp
         running = true
         bleRetries = 0
+        // Forward game rumble (poller thread) onto the main looper so motor writes serialize with the rest.
+        WinHandler.scRumbleForwarder = WinHandler.RumbleForwarder { low, high ->
+            bleHandler.post { onGameRumble(low.toInt() and 0xFFFF, high.toInt() and 0xFFFF) }
+        }
         connectBle(interp)
     }
 
@@ -163,6 +191,8 @@ class TritonMapper(
         if (live === this) live = null
         transportReady = false
         running = false
+        if (WinHandler.scRumbleForwarder != null) WinHandler.scRumbleForwarder = null
+        rumbleLow = 0; rumbleHigh = 0
         bleHandler.removeCallbacksAndMessages(null)
         ble?.close(); ble = null
         haptics = null
