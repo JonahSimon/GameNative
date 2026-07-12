@@ -22,12 +22,7 @@ import app.gamenative.CrashHandler
 import coil.annotation.ExperimentalCoilApi
 import coil.imageLoader
 import app.gamenative.R
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.content.ContextCompat
 import app.gamenative.service.SteamService
-import app.gamenative.steamcontroller.TritonBleSelfTest
 import app.gamenative.ui.component.dialog.CrashLogDialog
 import app.gamenative.ui.theme.settingsTileColors
 import app.gamenative.ui.theme.settingsTileColorsDebug
@@ -182,42 +177,7 @@ fun SettingsGroupDebug() {
         )
     }
 
-    // BLE self-test needs runtime BLUETOOTH_SCAN/CONNECT (API 31+) or location (<=30); request then run.
-    val blePerms = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-    }
-    val blePermLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) { result ->
-        if (result.values.all { it }) {
-            SnackbarManager.show("BLE self-test starting — controller must be in Bluetooth mode…")
-            TritonBleSelfTest.run(context) { msg -> SnackbarManager.show(msg) }
-        } else {
-            SnackbarManager.show("BLE permissions denied — can't run the BLE test.")
-        }
-    }
-
     SettingsGroup() {
-        SettingsMenuLink(
-            colors = settingsTileColors(),
-            title = { Text(text = "Test Steam Controller (BLE)") },
-            subtitle = { Text(text = "Bluetooth self-test: connect + decode reports (measures rate/jitter). Controller in BT mode (Puck unplugged). Result here / logcat tag TritonBleSelfTest.") },
-            onClick = {
-                val granted = blePerms.all {
-                    ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-                }
-                if (granted) {
-                    SnackbarManager.show("BLE self-test starting — controller must be in Bluetooth mode…")
-                    TritonBleSelfTest.run(context) { msg -> SnackbarManager.show(msg) }
-                } else {
-                    blePermLauncher.launch(blePerms)
-                }
-            },
-        )
         SettingsMenuLink(
             colors = settingsTileColors(),
             title = { Text(text = stringResource(R.string.settings_save_logcat_title)) },

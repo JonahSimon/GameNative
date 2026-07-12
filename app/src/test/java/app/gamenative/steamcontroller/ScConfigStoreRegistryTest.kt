@@ -25,7 +25,7 @@ class ScConfigStoreRegistryTest {
     private val key = "GAME_TEST"
 
     /** A minimal valid Steam config (two action sets) so [ScConfigStore.validate]/parse returns non-empty. */
-    private val vdfTwoSets = TritonBleEngineSelfTest.SMOKE_CONFIG
+    private val vdfTwoSets = SMOKE_CONFIG
 
     @Before
     fun clean() {

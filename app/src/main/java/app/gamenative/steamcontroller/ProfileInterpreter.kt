@@ -32,16 +32,16 @@ class ProfileInterpreter(
      *  headless / no overlay is attached, so unit tests and the engine-only path are unaffected. */
     private val uiBridge: ScUiBridge = NoOpScUiBridge,
 ) {
-    // Mutable + @Volatile so the debug live-tune path (TritonMapper.setTuning) can retune feel mid-game from the
-    // binder thread while the input loop reads these per report — no relaunch needed for dial-in.
+    // Mutable + @Volatile so the live-tune path ([setPadTuning], via TritonMapper.reload after an in-game edit) can
+    // retune feel mid-game from another thread while the input loop reads these per report — no relaunch for dial-in.
     @Volatile private var padDeadzone: Int? = padDeadzone
     @Volatile private var padSmoothing: Int = padSmoothing
 
     /** Split on-screen keyboard; takes over the pads while open (toggled by a [ScOutput.ShowKeyboard] binding). */
     private val keyboard = ScKeyboard(sink, keyboardOverlay, haptics, clock, padSmoothing)
 
-    /** Live dial-in of the two touchpad-feel knobs (debug; via [TritonMapper.setTuning]); also retunes the
-     *  keyboard cursor low-pass so one knob still governs both surfaces. */
+    /** Live dial-in of the two touchpad-feel knobs (via [TritonMapper.reload] after an in-game edit); also retunes
+     *  the keyboard cursor low-pass so one knob still governs both surfaces. */
     fun setPadTuning(deadzone: Int?, smoothing: Int) {
         padDeadzone = deadzone
         padSmoothing = smoothing

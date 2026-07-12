@@ -321,14 +321,6 @@ class TritonBle(private val context: Context) {
     private val lastPayload = HashMap<String, String>()
     private var changeLogCount = 0
 
-    // Re-armable rest-jitter probe (debug dial-in): when >0, log decoded right-pad X/Y + per-report delta for that
-    // many reports so we can measure the actual resting-finger noise magnitude in raw pad units. Armed via
-    // TritonMapper.armPadProbe (ScTestReceiver "probe" mode); decremented per report.
-    @Volatile private var probeRemaining = 0
-    private var probeLastX = 0
-    private var probeLastY = 0
-    fun armPadProbe(n: Int) { probeRemaining = n }
-
     private fun handleReport(ch: BluetoothGattCharacteristic, value: ByteArray) {
         // Log on-CHANGE per characteristic so a button press reveals which channel carries the input
         // (without flooding from steady-state streams). Key by uuid-tail + instanceId.
@@ -339,15 +331,6 @@ class TritonBle(private val context: Context) {
             changeLogCount++
             val shown = value.take(28).joinToString(" ") { "%02x".format(it) }
             Log.i(TAG, "CHG $key len=${value.size} [$shown]")
-        }
-        if (probeRemaining > 0 && value.size >= 27) {
-            // right pad X/Y are s16 LE at offsets 23 / 25 (see TritonProtocol.decodeFrom)
-            val rx = (((value[23].toInt() and 0xFF) or (value[24].toInt() shl 8)).toShort()).toInt()
-            val ry = (((value[25].toInt() and 0xFF) or (value[26].toInt() shl 8)).toShort()).toInt()
-            val d = Math.hypot((rx - probeLastX).toDouble(), (ry - probeLastY).toDouble()).toInt()
-            probeLastX = rx; probeLastY = ry
-            probeRemaining--
-            Log.i(TAG, "ScPadProbe rx=$rx ry=$ry delta=$d")
         }
         rawNotifyCount++
         onRaw?.invoke(value)

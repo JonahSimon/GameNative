@@ -38,11 +38,6 @@ class TritonMapper(
         // The controller stops rumbling ~50ms after the last report (firmware safety), so refresh a held
         // rumble faster than that — matches SDL's TRITON_RUMBLE_RESEND_INTERVAL_MS.
         private const val RUMBLE_RESEND_MS = 40L
-
-        /** The currently-running driver, for the debug live-tune hook ([ScTestReceiver] "tune" mode) to reach the
-         *  active interpreter. Set in [start], cleared in [stop]. Null when no game is running. */
-        @Volatile var live: TritonMapper? = null
-            private set
     }
 
     private var ble: TritonBle? = null
@@ -81,7 +76,6 @@ class TritonMapper(
     /** Start the BLE transport (the only transport). Feeds the [ProfileInterpreter] so action sets / layers /
      *  mode-shift / overlays / keyboard run in-game. */
     fun start() {
-        live = this
         startBle()
     }
 
@@ -152,23 +146,6 @@ class TritonMapper(
     }
 
     /**
-     * Live dial-in of the touchpad-feel knobs (debug only, via [ScTestReceiver]). Persists to [ScTuningStore] so
-     * the values stick for the next launch, AND pushes them into the running [interpreter] so the change is felt
-     * immediately on the pads — no game relaunch. A null arg leaves that knob at its stored value.
-     */
-    fun setTuning(deadzone: Int?, smoothing: Int?) {
-        deadzone?.let { ScTuningStore.setDeadzone(context, it) }
-        smoothing?.let { ScTuningStore.setSmoothing(context, it) }
-        val dz = ScTuningStore.deadzone(context)
-        val sm = ScTuningStore.smoothing(context)
-        interpreter?.setPadTuning(dz, sm)
-        Log.i(TAG, "tuning applied: deadzone=$dz smoothing=$sm")
-    }
-
-    /** Debug rest-jitter probe: log decoded right-pad X/Y + per-report delta for the next [n] reports (BLE only). */
-    fun armPadProbe(n: Int) { ble?.armPadProbe(n) }
-
-    /**
      * Re-resolve this session's config + tuning from the stores and push them into the running interpreter — so
      * an in-game edit (bindings / labels / menu commit / deadzone / smoothing) applies LIVE with no relaunch.
      * Safe to call from any thread (interpreter mutators are @Volatile / atomic field swaps).
@@ -188,7 +165,6 @@ class TritonMapper(
     }
 
     fun stop() {
-        if (live === this) live = null
         transportReady = false
         running = false
         if (WinHandler.scRumbleForwarder != null) WinHandler.scRumbleForwarder = null
