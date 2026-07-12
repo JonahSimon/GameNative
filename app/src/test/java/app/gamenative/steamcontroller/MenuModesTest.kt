@@ -121,29 +121,8 @@ class MenuModesTest {
         assertEquals(1, sink.keyPresses(XKeycode.KEY_F1))
     }
 
-    @Test
-    fun `global menuCommit=CLICK forces a release-style menu to require a click`() {
-        // touch4() is onClick=false (point-and-release). Forcing CLICK means releasing without a click does NOT fire.
-        val sink = RecordingSink()
-        val interp = ProfileInterpreter(sink, touch4(), haptics = null, menuCommit = ScTuningStore.MENU_COMMIT_CLICK)
-        interp.apply(leftPad(touch = true, x = -30000, y = 30000))  // highlight TL (F1)
-        interp.apply(leftPad(touch = false, x = 0, y = 0))          // release without click -> must NOT fire
-        assertEquals(0, sink.keyPresses(XKeycode.KEY_F1))
-        interp.apply(leftPad(touch = true, x = -30000, y = 30000))
-        interp.apply(leftPad(touch = true, x = -30000, y = 30000, click = true)) // click -> fires
-        assertEquals(1, sink.keyPresses(XKeycode.KEY_F1))
-    }
-
-    @Test
-    fun `global menuCommit=RELEASE forces an onClick menu to commit on release`() {
-        // Menu authored onClick=true; forcing RELEASE means a point-and-release (no click) commits.
-        val sink = RecordingSink()
-        val onClickMenu = ScProfile(leftPad = PadMode.TouchMenu(listOf(slot(XKeycode.KEY_F1), slot(XKeycode.KEY_F2)), cols = 2, rows = 1, onClick = true))
-        val interp = ProfileInterpreter(sink, onClickMenu, haptics = null, menuCommit = ScTuningStore.MENU_COMMIT_RELEASE)
-        interp.apply(leftPad(touch = true, x = -30000, y = 0))  // highlight F1
-        interp.apply(leftPad(touch = false, x = 0, y = 0))      // release without click -> fires (forced release)
-        assertEquals(1, sink.keyPresses(XKeycode.KEY_F1))
-    }
+    // (Removed: the global menuCommit override tests — that override was folded away; commit style is now purely
+    // per-menu via each menu's own onClick setting.)
 
     private fun stickState(lx: Int, ly: Int, l3: Boolean = false, touch: Boolean = false) = TritonState().apply {
         leftStickX = lx; leftStickY = ly

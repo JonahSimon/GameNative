@@ -27,7 +27,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import app.gamenative.service.SteamService
-import app.gamenative.steamcontroller.TritonSelfTest
 import app.gamenative.steamcontroller.TritonBleSelfTest
 import app.gamenative.ui.component.dialog.CrashLogDialog
 import app.gamenative.ui.theme.settingsTileColors
@@ -203,15 +202,6 @@ fun SettingsGroupDebug() {
     }
 
     SettingsGroup() {
-        SettingsMenuLink(
-            colors = settingsTileColors(),
-            title = { Text(text = "Test Steam Controller (Puck)") },
-            subtitle = { Text(text = "USB self-test: claim interface + decode reports. Plug the Puck, then watch the result here / logcat tag TritonSelfTest.") },
-            onClick = {
-                SnackbarManager.show("Puck self-test starting — hold buttons on the controller…")
-                TritonSelfTest.run(context) { result -> SnackbarManager.show(result) }
-            },
-        )
         SettingsMenuLink(
             colors = settingsTileColors(),
             title = { Text(text = "Test Steam Controller (BLE)") },

@@ -12,16 +12,14 @@ import android.util.Log
  *
  * Launch the app first (so the process is alive), then:
  *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative --es mode ble
- *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative --es mode usb
- *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative --es mode engine
  *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative --es mode bleengine
  *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative --es mode dump --ei secs 12
  *
  * Per-game config store round-trip (verifies the live-path config source on hardware):
  *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative.debug --es mode installsmoke --es key demo
- *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative.debug --es mode engine --es key demo
+ *   adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative.debug --es mode bleengine --es key demo
  *
- * Results go to logcat (tags TritonBleSelfTest / TritonSelfTest / TritonBleCapture / TritonEngineTest / ScConfigStore).
+ * Results go to logcat (tags TritonBleSelfTest / TritonBleCapture / TritonBleEngineTest / ScConfigStore).
  */
 class ScTestReceiver : BroadcastReceiver() {
     companion object { private const val TAG = "ScTestReceiver" }
@@ -33,12 +31,10 @@ class ScTestReceiver : BroadcastReceiver() {
         val key = intent.getStringExtra("key")
         when (mode) {
             "ble" -> TritonBleSelfTest.run(app) { Log.i(TAG, "ble result: $it") }
-            "usb" -> TritonSelfTest.run(app) { Log.i(TAG, "usb result: $it") }
-            "engine" -> TritonEngineSelfTest.run(app, key) { Log.i(TAG, "engine result: $it") }
             "bleengine" -> TritonBleEngineSelfTest.run(app, key) { Log.i(TAG, "bleengine result: $it") }
             "installsmoke" -> {
                 val k = key ?: "demo"
-                val ok = ScConfigStore.saveVdf(app, k, TritonEngineSelfTest.SMOKE_CONFIG)
+                val ok = ScConfigStore.saveVdf(app, k, TritonBleEngineSelfTest.SMOKE_CONFIG)
                 val readback = ScConfigStore.forKey(app, k)
                 Log.i(TAG, "installsmoke key='$k' saved=$ok -> ${ScConfigStore.fileFor(app, k)} ; " +
                     "readback sets=${readback?.sets?.keys} default=${readback?.defaultSetId}")
@@ -86,7 +82,7 @@ class ScTestReceiver : BroadcastReceiver() {
                 mapper?.armPadProbe(n)
                 Log.i(TAG, "probe armed n=$n live=${mapper != null}")
             }
-            else -> Log.w(TAG, "unknown mode=$mode (use ble|usb|engine|bleengine|installsmoke|dump|tune|probe|reload)")
+            else -> Log.w(TAG, "unknown mode=$mode (use ble|bleengine|installsmoke|dump|tune|probe|reload)")
         }
     }
 }

@@ -15,15 +15,6 @@ object ScTuningStore {
     private const val PREFS = "sc_tuning"
     private const val KEY_DEADZONE = "touchpad_deadzone"
     private const val KEY_SMOOTHING = "touchpad_smoothing"
-    private const val KEY_MENU_COMMIT = "menu_commit"
-
-    /** Touch/radial menu commit-style override (global). IMPORTED = honor each menu's own `requires_click`
-     *  (Steam's per-menu setting); CLICK = always commit on pad/stick click; RELEASE = always commit on
-     *  point-and-release. Read by the live driver into [ProfileInterpreter]. */
-    const val MENU_COMMIT_IMPORTED = 0
-    const val MENU_COMMIT_CLICK = 1
-    const val MENU_COMMIT_RELEASE = 2
-    const val DEFAULT_MENU_COMMIT = MENU_COMMIT_IMPORTED
 
     /** Deadzone default matches the built-in [ScProfile.PadMode.Mouse] jitterFloor. */
     const val DEFAULT_DEADZONE = 24
@@ -51,13 +42,6 @@ object ScTuningStore {
 
     fun setSmoothing(context: Context, value: Int) {
         prefs(context).edit().putInt(KEY_SMOOTHING, value.coerceIn(MIN_SMOOTHING, MAX_SMOOTHING)).apply()
-    }
-
-    fun menuCommit(context: Context): Int =
-        prefs(context).getInt(KEY_MENU_COMMIT, DEFAULT_MENU_COMMIT).coerceIn(MENU_COMMIT_IMPORTED, MENU_COMMIT_RELEASE)
-
-    fun setMenuCommit(context: Context, value: Int) {
-        prefs(context).edit().putInt(KEY_MENU_COMMIT, value.coerceIn(MENU_COMMIT_IMPORTED, MENU_COMMIT_RELEASE)).apply()
     }
 
     /** Map a 0–100 smoothing percent to an EMA alpha (weight of the new sample): 0% → 1.0 (no smoothing),

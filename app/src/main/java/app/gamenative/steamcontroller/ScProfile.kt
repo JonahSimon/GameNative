@@ -271,6 +271,8 @@ sealed class PadMode {
         val rotation: Float = 0f,
         /** Per-axis output scale (Steam `sensitivity_horiz_scale`/`_vert_scale` %/100; the H/V Output Mixer). */
         val horizScale: Float = 1f, val vertScale: Float = 1f,
+        /** Per-pad motion low-pass (0–100); was the global "Touchpad smoothing". Higher = smoother/laggier. */
+        val smoothing: Int = ScTuningStore.DEFAULT_SMOOTHING,
     ) : PadMode()
     /**
      * Button Pad / ToME grid: pad split into [cols]×[rows]; the cell under the finger fires its output.

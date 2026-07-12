@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -122,7 +121,7 @@ fun ScConfigManagerDialog(storeKey: String, onChanged: () -> Unit, onDismiss: ()
 
                 HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                    ScNavItem(nav, line = 6, onActivate = onDismiss) { Button(onClick = onDismiss) { Text("Done") } }
+                    ScNavItem(nav, line = 6, onActivate = onDismiss) { ScActionChip("Done", onClick = onDismiss, filled = true) }
                 }
             }
         }

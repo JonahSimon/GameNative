@@ -2,7 +2,6 @@ package app.gamenative.ui.component.dialog
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,16 +18,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -38,7 +33,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import kotlinx.coroutines.delay
 
 /**
  * A text field for the in-game Steam-Controller editors that does NOT pop the Android system IME (which, on the
@@ -57,19 +51,22 @@ fun ScTextEditField(
     /** Optional controlled editing state, so a parent (e.g. d-pad "A") can open the keyboard. Null = self-managed. */
     editing: Boolean = false,
     onEditingChange: ((Boolean) -> Unit)? = null,
+    /** When false, drop the stacked label (it becomes the empty-value placeholder) so the field is a single compact
+     *  box — used where a selection outline wraps it and the label would make that outline look oversized. */
+    showLabel: Boolean = true,
 ) {
     var internalEditing by remember { mutableStateOf(false) }
     val isEditing = if (onEditingChange != null) editing else internalEditing
     val setEditing: (Boolean) -> Unit = onEditingChange ?: { internalEditing = it }
     Column(modifier) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        if (showLabel) Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
         Surface(
             color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp).clickable { setEditing(true) },
+            shape = RoundedCornerShape(16.dp),  // match the nav-selection outline radius
+            modifier = Modifier.fillMaxWidth().then(if (showLabel) Modifier.padding(top = 2.dp) else Modifier).clickable { setEditing(true) },
         ) {
             Text(
-                value.ifBlank { "Tap to edit" },
+                value.ifBlank { if (showLabel) "Tap to edit" else label },
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                 color = if (value.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -98,11 +95,6 @@ fun ScOnScreenKeyboardDialog(
     var text by remember { mutableStateOf(initial) }
     var shift by remember { mutableStateOf(false) }
     val kbNav = remember { ScNavState() }
-    val kbFocus = remember { FocusRequester() }
-    var kbHasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        repeat(80) { if (kbHasFocus) return@LaunchedEffect; runCatching { kbFocus.requestFocus() }; delay(25) }
-    }
     Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.fillMaxWidth(0.96f).padding(8.dp),
@@ -111,9 +103,7 @@ fun ScOnScreenKeyboardDialog(
         ) {
             Column(
                 modifier = Modifier.padding(12.dp)
-                    .focusRequester(kbFocus)
-                    .onFocusChanged { kbHasFocus = it.hasFocus }
-                    .focusable()
+                    .scCaptureFocus()
                     .onPreviewKeyEvent { ev ->
                         if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (ev.key) {

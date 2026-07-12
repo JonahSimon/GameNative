@@ -103,6 +103,19 @@ class QuickMenuNavTest {
     }
 
     @Test
+    fun `every fixed ScMenuNav control fires its declared nav key`() {
+        // Locks the source-of-truth table to interpreter behavior: if a Control's button is remapped, the tooltip
+        // (which reads the same table) and this test move together, so they can't drift.
+        for (c in ScMenuNav.controls) {
+            val bridge = FakeBridge(capturing = true)
+            val i = interp(bridge)
+            i.apply(TritonState())                                            // baseline
+            i.apply(TritonState().apply { buttons = c.buttonBit })            // rising edge
+            assertTrue("${c.hint} (${c.desc}) -> ${c.key}", bridge.navs.contains(c.key))
+        }
+    }
+
+    @Test
     fun `no game output is emitted while a menu is captured`() {
         val bridge = FakeBridge(capturing = true)
         val sink = RecordingSink()

@@ -616,7 +616,7 @@ class SteamControllerProfileImporterTest {
 
     @Test
     fun `on-phone engine smoke config decodes all three step-3 mechanisms`() {
-        val cfg = SteamControllerProfileImporter.importConfig(app.gamenative.steamcontroller.TritonEngineSelfTest.SMOKE_CONFIG)
+        val cfg = SteamControllerProfileImporter.importConfig(app.gamenative.steamcontroller.TritonBleEngineSelfTest.SMOKE_CONFIG)
         assertEquals(setOf("0", "1", "2"), cfg.sets.keys) // Default, Combat, Overlay(layer)
         assertEquals("0", cfg.defaultSetId)
         val base = cfg.sets.getValue("0").buttons

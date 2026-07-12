@@ -135,7 +135,7 @@ class ScMenuOverlayView(context: Context) : View(context), ScMenuOverlay {
         val maxSlotR = base * 0.095f * l.scale
         val tangentLimit = if (n >= 2) (ringR * sin(Math.PI / n) * 0.9).toFloat() else Float.MAX_VALUE
         val slotR = minOf(maxSlotR, tangentLimit).coerceAtLeast(base * 0.03f * l.scale)
-        text.textSize = (slotR * 0.95f).coerceAtMost(44f * l.scale)
+        text.textSize = (slotR * 0.7f).coerceAtMost(44f * l.scale)
         // Center hub fills the middle void; the more ring buttons, the bigger the hub (minimize wasted space).
         // [voidR] is the empty middle radius (to the ring slots' inner edges); never let the hub overlap them.
         val voidR = ringR - slotR
@@ -183,7 +183,9 @@ class ScMenuOverlayView(context: Context) : View(context), ScMenuOverlay {
         val cellW = gridW / cols
         val cellH = gridH / rows
         val pad = 6f * l.scale
-        text.textSize = 44f * l.scale
+        // Scale the label to the cell instead of a fixed 44px, so multi-column grids don't collide/overflow the slots.
+        val inner = (min(cellW, cellH) - 2f * pad).coerceAtLeast(1f)
+        text.textSize = (inner * 0.34f).coerceAtMost(44f * l.scale).coerceAtLeast(12f)
         // Local halo behind the grid.
         canvas.drawRoundRect(RectF(left - pad, top - pad, left + gridW + pad, top + gridH + pad), 16f, 16f, backdrop)
         for (i in s.labels.indices) {

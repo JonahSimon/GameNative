@@ -23,7 +23,6 @@ import com.materialkolor.PaletteStyle
 import com.winlator.box86_64.Box86_64Preset
 import com.winlator.container.Container
 import com.winlator.core.DefaultVersion
-import com.winlator.xenvironment.components.PulseAudioComponent
 import `in`.dragonbra.javasteam.enums.EPersonaState
 import java.util.EnumSet
 import kotlinx.coroutines.CoroutineScope
@@ -1264,6 +1263,14 @@ object PrefManager {
         set(value) {
             setPref(CUSTOM_GAME_MANUAL_FOLDERS, Json.encodeToString(value))
         }
+
+    // Diagnostics launch mode (verbose wrapper/Wine logging). Persisted so setupXEnvironment can read it via
+    // context instead of threading it as a parameter through the (very large) XServerScreen composable — adding a
+    // parameter there pushed the method past ART's bytecode-verifier limit (VerifyError on launch). See MainViewModel.
+    private val WRAPPER_DIAGNOSTICS = booleanPreferencesKey("wrapper_diagnostics")
+    var wrapperDiagnostics: Boolean
+        get() = getPref(WRAPPER_DIAGNOSTICS, false)
+        set(value) = setPref(WRAPPER_DIAGNOSTICS, value)
 
     // Add new setting for Wine debug logging
     private val ENABLE_WINE_DEBUG = booleanPreferencesKey("enable_wine_debug")

@@ -7,11 +7,6 @@ package app.gamenative.steamcontroller
  * Zlib). All multi-byte fields are little-endian; the wire report is [type, seq, buttons(u32), ...].
  */
 object TritonProtocol {
-    const val VID = 0x28DE            // Valve
-    const val PID_PUCK = 0x1304       // Proteus dongle (wireless)
-    const val PID_PUCK_NEREID = 0x1305
-    const val PID_WIRED = 0x1302
-
     // ---- input report types (ETritonReportIDTypes), at buf[0] ----
     const val ID_STATE = 0x42
     const val ID_STATE_BLE = 0x45     // this unit streams 0x45; same layout as 0x42

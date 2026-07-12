@@ -10,14 +10,13 @@ import com.winlator.xserver.XKeycode
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * On-hardware smoke test for the **step-3 mapping engine over BLE** — the BLE analog of
- * [TritonEngineSelfTest] (which is USB). It loads a config, drives a real [ProfileInterpreter] from the live
+ * On-hardware smoke test for the **step-3 mapping engine over BLE**. It loads a config, drives a real [ProfileInterpreter] from the live
  * [TritonBle] stream, and logs every context transition + output to logcat (tag `TritonBleEngineTest`), with
  * NO Wine container and NO injection. That isolates the **BLE→interpreter bridge** from the in-game
  * injection/overlay layer: if KEY/SET lines log here, the BLE engine path works and any in-game failure is
  * downstream (injection/overlay), not transport. Caller must already hold BLE perms.
  *
- * Press map (embedded [TritonEngineSelfTest.SMOKE_CONFIG]): A/B → keys 1/2 · hold LB → Overlay layer (A → 8) ·
+ * Press map (embedded [SMOKE_CONFIG]): A/B → keys 1/2 · hold LB → Overlay layer (A → 8) ·
  * tap RB → Combat set (A → 3); tap RB again → back · hold the lower-left back paddle → mode-shift (A → 9).
  *
  * Triggered via `adb shell am broadcast -a app.gamenative.SC_SELFTEST -p app.gamenative --es mode bleengine`
@@ -29,13 +28,49 @@ object TritonBleEngineSelfTest {
 
     @Volatile private var running = false
 
+    /** Mode-shift/layer/preset config used by this self-test + by importer/config-store unit tests. Press map:
+     *  A/B → keys 1/2 in the base set · hold LB → Overlay layer (A → 8) · tap RB → Combat preset (A → 3). */
+    const val SMOKE_CONFIG = """
+"controller_mappings"
+{
+	"version"		"3"
+	"title"		"Engine Smoke Test"
+	"controller_type"		"controller_triton"
+	"actions" { "Default" { "title" "Default" "legacy_set" "1" } "Combat" { "title" "Combat" "legacy_set" "1" } }
+	"action_layers" { "Overlay" { "title" "Overlay" "legacy_set" "1" "set_layer" "1" "parent_set_name" "Default" } }
+
+	"group" { "id" "0" "mode" "four_buttons" "inputs" {
+		"button_a" { "activators" { "Full_Press" { "bindings" { "binding" "key_press 1" } } } }
+		"button_b" { "activators" { "Full_Press" { "bindings" { "binding" "key_press 2" } } } } } }
+	"group" { "id" "1" "mode" "four_buttons" "inputs" {
+		"button_a" { "activators" { "Full_Press" { "bindings" { "binding" "key_press 9" } } } } } }
+	"group" { "id" "2" "mode" "switches" "inputs" {
+		"left_bumper"      { "activators" { "Full_Press" { "bindings" { "binding" "controller_action hold_layer 3 0 0" } } } }
+		"right_bumper"     { "activators" { "Full_Press" { "bindings" { "binding" "controller_action CHANGE_PRESET 2 0 0" } } } }
+		"button_back_left" { "activators" { "Full_Press" { "bindings" { "binding" "mode_shift button_diamond 1" } } } } } }
+	"group" { "id" "3" "mode" "four_buttons" "inputs" {
+		"button_a" { "activators" { "Full_Press" { "bindings" { "binding" "key_press 3" } } } } } }
+	"group" { "id" "4" "mode" "switches" "inputs" {
+		"right_bumper" { "activators" { "Full_Press" { "bindings" { "binding" "controller_action CHANGE_PRESET 1 0 0" } } } } } }
+	"group" { "id" "5" "mode" "four_buttons" "inputs" {
+		"button_a" { "activators" { "Full_Press" { "bindings" { "binding" "key_press 8" } } } } } }
+
+	"preset" { "id" "0" "name" "Default" "group_source_bindings" {
+		"0" "button_diamond active" "2" "switch active" "1" "button_diamond active modeshift" } }
+	"preset" { "id" "1" "name" "Combat" "group_source_bindings" {
+		"3" "button_diamond active" "4" "switch active" } }
+	"preset" { "id" "2" "name" "Overlay" "group_source_bindings" {
+		"5" "button_diamond active" } }
+}
+"""
+
     fun run(context: Context, configKey: String? = null, onResult: (String) -> Unit) {
         if (running) { onResult("BLE engine self-test already running"); return }
         val cfg: ScConfig = if (configKey != null) {
             ScConfigStore.forKey(context, configKey)
                 ?: run { onResult("No stored config for key '$configKey' (install one first)."); return }
         } else {
-            SteamControllerProfileImporter.importConfig(TritonEngineSelfTest.SMOKE_CONFIG)
+            SteamControllerProfileImporter.importConfig(SMOKE_CONFIG)
         }
         val src = if (configKey != null) "store key '$configKey'" else "embedded SMOKE_CONFIG"
         running = true

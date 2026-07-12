@@ -55,12 +55,7 @@ import androidx.compose.runtime.setValue
 import app.gamenative.MainActivity
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.foundation.focusable
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.Alignment
@@ -110,7 +105,6 @@ import app.gamenative.ui.component.QuickMenuAction
 import app.gamenative.ui.component.dialog.ScConfigManagerDialog
 import app.gamenative.ui.component.dialog.ScOverlayEditorDialog
 import app.gamenative.ui.component.dialog.ScOverlayTarget
-import app.gamenative.ui.component.dialog.ScTuningDialog
 import app.gamenative.ui.component.dialog.SteamControllerBindingEditorDialog
 import app.gamenative.ui.component.parseBooleanExtra
 import app.gamenative.ui.component.parsePositiveFpsLimit
@@ -324,7 +318,9 @@ fun XServerScreen(
     appId: String,
     bootToContainer: Boolean,
     testGraphics: Boolean = false,
-    diagnostics: Boolean = false,
+    // NOTE: `diagnostics` is intentionally NOT a parameter here — read it via PrefManager.wrapperDiagnostics at the
+    // setupXEnvironment call below. Adding a parameter to this (very large) composable pushed the method past ART's
+    // bytecode-verifier limit → VerifyError / crash on every game launch. Keep new inputs out of this signature.
     isOffline: Boolean = false,
     registerBackAction: ( ( ) -> Unit ) -> Unit,
     navigateBack: () -> Unit,
@@ -484,7 +480,6 @@ fun XServerScreen(
     // Steam Controller in-game live editors (shown from the QuickMenu CONTROLLER tab when an SC is connected).
     var showScRoot by remember { mutableStateOf(false) }
     var showScBindings by remember { mutableStateOf(false) }
-    var showScTuning by remember { mutableStateOf(false) }
     var showScLayout by remember { mutableStateOf(false) }
     var showScKeyboard by remember { mutableStateOf(false) }
     var showScConfigs by remember { mutableStateOf(false) }
@@ -1235,7 +1230,6 @@ fun XServerScreen(
             // so the change applies to the running game with no relaunch.
             QuickMenuAction.SC_ROOT -> { keepPausedForEditor = true; showScRoot = true; true }
             QuickMenuAction.SC_BINDINGS -> { keepPausedForEditor = true; showScBindings = true; true }
-            QuickMenuAction.SC_TUNING -> { keepPausedForEditor = true; showScTuning = true; true }
             QuickMenuAction.SC_LAYOUT -> { keepPausedForEditor = true; showScLayout = true; true }
 
             QuickMenuAction.PERFORMANCE_HUD -> {
@@ -2108,7 +2102,7 @@ fun XServerScreen(
                                 appId,
                                 bootToContainer,
                                 testGraphics,
-                                diagnostics,
+                                PrefManager.wrapperDiagnostics,
                                 xServerState,
                                 envVars,
                                 container,
@@ -2298,6 +2292,10 @@ fun XServerScreen(
                                     app.gamenative.steamcontroller.ScNavKey.TAB_PREV -> KeyEvent.KEYCODE_BUTTON_L1
                                     app.gamenative.steamcontroller.ScNavKey.TAB_NEXT -> KeyEvent.KEYCODE_BUTTON_R1
                                     app.gamenative.steamcontroller.ScNavKey.HELP -> KeyEvent.KEYCODE_BUTTON_Y // Y = Help
+                                    app.gamenative.steamcontroller.ScNavKey.CLOSE -> KeyEvent.KEYCODE_BUTTON_START // Start = close editor
+                                    // Triggers -> zoom in/out; the overlay placement editor listens for these to resize.
+                                    app.gamenative.steamcontroller.ScNavKey.ZOOM_IN -> KeyEvent.KEYCODE_ZOOM_IN
+                                    app.gamenative.steamcontroller.ScNavKey.ZOOM_OUT -> KeyEvent.KEYCODE_ZOOM_OUT
                                     else -> KeyEvent.KEYCODE_DPAD_CENTER  // SELECT
                                 }
                                 // Compose's focus system does its own DPAD focus traversal + DPAD_CENTER activation,
@@ -2920,12 +2918,13 @@ fun XServerScreen(
         tritonMapper = tritonMapper,
         showScRoot = showScRoot, onShowScRoot = { showScRoot = it },
         showScBindings = showScBindings, onShowScBindings = { showScBindings = it },
-        showScTuning = showScTuning, onShowScTuning = { showScTuning = it },
         showScLayout = showScLayout, onShowScLayout = { showScLayout = it },
         showScKeyboard = showScKeyboard, onShowScKeyboard = { showScKeyboard = it },
         showScConfigs = showScConfigs, onShowScConfigs = { showScConfigs = it },
         scReturnToRoot = scReturnToRoot, onScReturnToRoot = { scReturnToRoot = it },
         onFullDismiss = scEditorDismiss,
+        // Back from the SC hub returns to the QuickMenu (not the game): keep paused, show the QuickMenu again.
+        onRootBack = { keepPausedForEditor = false; showQuickMenu = true },
     )
 
     // var ranSetup by rememberSaveable { mutableStateOf(false) }
@@ -2955,12 +2954,13 @@ private fun ScLiveEditorDialogs(
     tritonMapper: app.gamenative.steamcontroller.TritonMapper?,
     showScRoot: Boolean, onShowScRoot: (Boolean) -> Unit,
     showScBindings: Boolean, onShowScBindings: (Boolean) -> Unit,
-    showScTuning: Boolean, onShowScTuning: (Boolean) -> Unit,
     showScLayout: Boolean, onShowScLayout: (Boolean) -> Unit,
     showScKeyboard: Boolean, onShowScKeyboard: (Boolean) -> Unit,
     showScConfigs: Boolean, onShowScConfigs: (Boolean) -> Unit,
     scReturnToRoot: Boolean, onScReturnToRoot: (Boolean) -> Unit,
     onFullDismiss: () -> Unit,
+    /** Back from the ROOT hub → reopen the QuickMenu (not resume the game). */
+    onRootBack: () -> Unit,
 ) {
     // Close a sub-editor opened from the SC root hub: if we came from the hub, reopen it (back ONE level, stay
     // paused, apply edits live); otherwise (opened directly) fall through to the full resume.
@@ -2976,68 +2976,22 @@ private fun ScLiveEditorDialogs(
     }
     if (showScRoot) {
         // The hub items (label + the action that opens that sub-editor). Each opens its editor with scReturnToRoot=true
-        // so B comes back here one level at a time.
-        val items: List<Pair<Int, () -> Unit>> = listOf(
-            R.string.sc_edit_configs to { onShowScRoot(false); onScReturnToRoot(true); onShowScConfigs(true) },
-            R.string.sc_edit_bindings to { onShowScRoot(false); onScReturnToRoot(true); onShowScBindings(true) },
-            R.string.sc_edit_tuning to { onShowScRoot(false); onScReturnToRoot(true); onShowScTuning(true) },
-            R.string.sc_edit_layout to { onShowScRoot(false); onScReturnToRoot(true); onShowScLayout(true) },
-            R.string.sc_edit_keyboard to { onShowScRoot(false); onScReturnToRoot(true); onShowScKeyboard(true) },
+        // so B comes back here one level at a time. Rendered by [ScRootMenuDialog] so the hub shares the bindings
+        // editor's look (gradient selection ring, purple selected text, oval Back chip) and its controller nav.
+        val items: List<Pair<String, () -> Unit>> = listOf(
+            stringResource(R.string.sc_edit_configs) to { onShowScRoot(false); onScReturnToRoot(true); onShowScConfigs(true) },
+            stringResource(R.string.sc_edit_bindings) to { onShowScRoot(false); onScReturnToRoot(true); onShowScBindings(true) },
+            stringResource(R.string.sc_edit_layout) to { onShowScRoot(false); onScReturnToRoot(true); onShowScLayout(true) },
+            stringResource(R.string.sc_edit_keyboard) to { onShowScRoot(false); onScReturnToRoot(true); onShowScKeyboard(true) },
         )
-        // Controller nav is handled EXPLICITLY (a selection index + key handling on one focusable root) rather than
-        // relying on Compose's inter-node DPAD focus traversal, which does not fire inside a Dialog window when no
-        // child is focused (diagnosed on-device: nav keys reached the dialog's AndroidComposeView but consumedDown was
-        // always false). One reliably-focused root + a visible highlight is robust and generalizes to other SC surfaces.
-        var sel by remember { mutableStateOf(0) }
-        val rootFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-        LaunchedEffect(Unit) {
-            // The focus node may not be attached on the first frame of a freshly-opened dialog — retry until it takes.
-            repeat(25) { if (runCatching { rootFocus.requestFocus() }.isSuccess) return@LaunchedEffect; delay(20) }
-        }
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { onShowScRoot(false); onFullDismiss() },
-            title = { androidx.compose.material3.Text(stringResource(R.string.sc_edit_root)) },
-            text = {
-                androidx.compose.foundation.layout.Column(
-                    modifier = Modifier
-                        .focusRequester(rootFocus)
-                        .focusable()
-                        .onPreviewKeyEvent { ev ->
-                            if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                            when (ev.key) {
-                                Key.DirectionDown -> { sel = (sel + 1).coerceAtMost(items.lastIndex); true }
-                                Key.DirectionUp -> { sel = (sel - 1).coerceAtLeast(0); true }
-                                Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.ButtonA -> { items[sel].second(); true }
-                                else -> false
-                            }
-                        }
-                ) {
-                    app.gamenative.ui.component.dialog.ScNavDialogCapture(onBack = { onShowScRoot(false); onFullDismiss() })
-                    items.forEachIndexed { i, item ->
-                        val focused = i == sel
-                        TextButton(
-                            onClick = { sel = i; item.second() },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(if (focused) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent),
-                        ) {
-                            androidx.compose.material3.Text(stringResource(item.first))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { onShowScRoot(false); onFullDismiss() }) {
-                    androidx.compose.material3.Text(stringResource(R.string.quick_menu_back))
-                }
-            },
+        app.gamenative.ui.component.dialog.ScRootMenuDialog(
+            title = stringResource(R.string.sc_edit_root),
+            items = items,
+            onBack = { onShowScRoot(false); onRootBack() },
         )
     }
     if (showScBindings) {
         SteamControllerBindingEditorDialog(containerId = appId, onDismiss = { scSubEditorDismiss { onShowScBindings(false) } })
-    }
-    if (showScTuning) {
-        ScTuningDialog(onApply = { runCatching { tritonMapper?.reload() } }, onDismiss = { scSubEditorDismiss { onShowScTuning(false) } })
     }
     if (showScLayout) {
         ScOverlayEditorDialog(

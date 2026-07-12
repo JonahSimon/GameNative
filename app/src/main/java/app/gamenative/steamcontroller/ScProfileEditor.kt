@@ -23,10 +23,12 @@ enum class ScSource(val bit: Int, val label: String, val group: String) {
     B(TritonProtocol.BTN_B, "B", "Face"),
     X(TritonProtocol.BTN_X, "X", "Face"),
     Y(TritonProtocol.BTN_Y, "Y", "Face"),
-    LEFT_BUMPER(TritonProtocol.BTN_LBUMPER, "Left Bumper (L1)", "Bumpers/Triggers"),
-    RIGHT_BUMPER(TritonProtocol.BTN_RBUMPER, "Right Bumper (R1)", "Bumpers/Triggers"),
-    LEFT_TRIGGER_CLICK(TritonProtocol.BTN_LTRIG_CLICK, "Left Trigger (full pull)", "Bumpers/Triggers"),
-    RIGHT_TRIGGER_CLICK(TritonProtocol.BTN_RTRIG_CLICK, "Right Trigger (full pull)", "Bumpers/Triggers"),
+    LEFT_BUMPER(TritonProtocol.BTN_LBUMPER, "Left Bumper (L1)", "Bumpers"),
+    RIGHT_BUMPER(TritonProtocol.BTN_RBUMPER, "Right Bumper (R1)", "Bumpers"),
+    // Trigger full-pull digital clicks are folded into the Left/Right Trigger behavior editors (not shown as
+    // standalone button rows), mirroring how stick/pad clicks fold into their analog surface. Group unused.
+    LEFT_TRIGGER_CLICK(TritonProtocol.BTN_LTRIG_CLICK, "Left Trigger (full pull)", "Bumpers"),
+    RIGHT_TRIGGER_CLICK(TritonProtocol.BTN_RTRIG_CLICK, "Right Trigger (full pull)", "Bumpers"),
     DPAD_UP(TritonProtocol.BTN_DPAD_UP, "D-Pad Up", "D-Pad"),
     DPAD_DOWN(TritonProtocol.BTN_DPAD_DOWN, "D-Pad Down", "D-Pad"),
     DPAD_LEFT(TritonProtocol.BTN_DPAD_LEFT, "D-Pad Left", "D-Pad"),
@@ -215,8 +217,11 @@ data class EditAnalog(
     val mode: AnalogMode = AnalogMode.NONE,
     /** Mouse / flick sensitivity as a percent of the engine default (100 = default). */
     val sensitivityPct: Int = 100,
-    /** Deadzone as a percent of full deflection (stick modes). */
+    /** Deadzone as a percent of full deflection (stick modes / stick-mouse). */
     val deadzonePct: Int = 12,
+    /** Pad MOUSE touch-feel (per-pad): motion smoothing (0–100) + rest jitter floor (raw pad units). */
+    val smoothingPct: Int = ScTuningStore.DEFAULT_SMOOTHING,
+    val jitterFloor: Int = 24,
     val invertY: Boolean = false,
     val curve: EditCurve = EditCurve.LINEAR,
     /** JOYSTICK: which virtual XInput stick to drive ("LEFT"/"RIGHT"). */
@@ -256,6 +261,7 @@ data class EditAnalog(
     fun toPadMode(): PadMode? = when (mode) {
         AnalogMode.NONE -> PadMode.None
         AnalogMode.MOUSE -> PadMode.Mouse(sensitivity = DEFAULT_PAD_MOUSE_SENS * sensitivityPct / 100f, invertY = invertY,
+            jitterFloor = jitterFloor, smoothing = smoothingPct,
             rotation = mouseRotation, horizScale = mouseHorizScale, vertScale = mouseVertScale)
         AnalogMode.SCROLL_WHEEL -> PadMode.ScrollWheel(step = scrollStep, invertY = invertY)
         AnalogMode.DPAD -> PadMode.DPad(up.toOutput(), down.toOutput(), left.toOutput(), right.toOutput(), deadzone = deadzonePct / 100f,
@@ -304,6 +310,7 @@ data class EditAnalog(
         fun fromPad(m: PadMode): EditAnalog? = when (m) {
             is PadMode.None -> EditAnalog(AnalogMode.NONE)
             is PadMode.Mouse -> EditAnalog(AnalogMode.MOUSE, sensitivityPct = (m.sensitivity / DEFAULT_PAD_MOUSE_SENS * 100f).roundToInt(), invertY = m.invertY,
+                smoothingPct = m.smoothing, jitterFloor = m.jitterFloor,
                 mouseRotation = m.rotation, mouseHorizScale = m.horizScale, mouseVertScale = m.vertScale)
             // Absolute/region mouse, single-button, directional-swipe aren't authored in the editor yet → null =
             // inherit (preserved losslessly on edit; importer handles them).

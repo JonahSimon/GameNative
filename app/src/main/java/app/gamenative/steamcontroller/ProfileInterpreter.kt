@@ -28,16 +28,10 @@ class ProfileInterpreter(
     padDeadzone: Int? = null,
     /** Global "Touchpad smoothing" (0–100) low-pass for pad-mouse motion + the keyboard cursor. 0 = off. */
     padSmoothing: Int = 0,
-    /** Global touch/radial-menu commit-style override (see [ScTuningStore.MENU_COMMIT_IMPORTED] etc.). IMPORTED
-     *  honors each menu's own `requires_click`; CLICK/RELEASE force commit-on-click / commit-on-release. */
-    menuCommit: Int = ScTuningStore.MENU_COMMIT_IMPORTED,
     /** App-UI seam: open the QuickMenu + navigate it (and the in-game editors) from the controller. No-op when
      *  headless / no overlay is attached, so unit tests and the engine-only path are unaffected. */
     private val uiBridge: ScUiBridge = NoOpScUiBridge,
 ) {
-    // @Volatile so an in-game edit (TritonMapper.reload) can switch commit style live.
-    @Volatile private var menuCommit: Int = menuCommit
-    fun setMenuCommit(value: Int) { menuCommit = value }
     // Mutable + @Volatile so the debug live-tune path (TritonMapper.setTuning) can retune feel mid-game from the
     // binder thread while the input loop reads these per report — no relaunch needed for dial-in.
     @Volatile private var padDeadzone: Int? = padDeadzone
@@ -107,12 +101,14 @@ class ProfileInterpreter(
         /** Pad-mouse cursor tuning for menu/editor capture: raw-unit rest deadzone + pad-units→pixels gain. */
         const val NAV_CURSOR_FLOOR = 80f
         const val NAV_CURSOR_GAIN = 0.06f
-        const val NAV_CURSOR_TICK_PX = 36f
+        const val NAV_CURSOR_TICK_PX = 110f  // detent-tick spacing (px of cursor travel); higher = fewer ticks so the click stands out
         /** Raw gyro rotation-speed reference at which acceleration reaches full [GyroAccel.gain]. Tuned on-device. */
         const val GYRO_ACCEL_REF = 8000f
         /** Held-d-pad menu nav auto-repeat: initial delay, then per-step interval (ms). */
         const val NAV_REPEAT_DELAY_MS = 400L
         const val NAV_REPEAT_INTERVAL_MS = 130L
+        // Trigger pull (raw 0..32767) past this counts as a held resize intent in the overlay editor (~quarter-pull).
+        const val TRIGGER_NAV_THRESHOLD = 8000
         /** Macro step timing (ms): how long each command holds, and the gap after it, so the game samples distinct
          *  presses. Tunable by feel on device. [MIN_PULSE_MS] guards a delayed press+release so it still registers. */
         const val MACRO_STEP_MS = 40L
@@ -431,13 +427,22 @@ class ProfileInterpreter(
             now >= navRepeatAt -> { uiBridge.nav(dir); navRepeatAt = now + NAV_REPEAT_INTERVAL_MS }
         }
 
-        if (rising(s, TritonProtocol.BTN_A)) uiBridge.nav(ScNavKey.SELECT)
-        if (rising(s, TritonProtocol.BTN_B) || rising(s, TritonProtocol.BTN_STEAM)) uiBridge.nav(ScNavKey.BACK)
-        // Bumpers flip between command-picker tabs (Keyboard / Numpad / Mouse / Gamepad / …).
-        if (rising(s, TritonProtocol.BTN_LBUMPER)) uiBridge.nav(ScNavKey.TAB_PREV)
-        if (rising(s, TritonProtocol.BTN_RBUMPER)) uiBridge.nav(ScNavKey.TAB_NEXT)
-        // Y = Help. (Part of the fixed menu-nav vocabulary — see the "standard non-editable QuickMenu nav" backlog item.)
-        if (rising(s, TritonProtocol.BTN_Y)) uiBridge.nav(ScNavKey.HELP)
+        // Triggers = resize intent in the overlay placement editor (RT bigger, LT smaller); ignored by other menus.
+        // Own held-repeat so the user can resize while the stick moves the overlay. Threshold ~quarter-pull.
+        val zoom: ScNavKey? = when {
+            s.triggerRight > TRIGGER_NAV_THRESHOLD -> ScNavKey.ZOOM_IN
+            s.triggerLeft > TRIGGER_NAV_THRESHOLD -> ScNavKey.ZOOM_OUT
+            else -> null
+        }
+        when {
+            zoom == null -> zoomHeld = null
+            zoom != zoomHeld -> { zoomHeld = zoom; uiBridge.nav(zoom); zoomRepeatAt = now + NAV_REPEAT_DELAY_MS }
+            now >= zoomRepeatAt -> { uiBridge.nav(zoom); zoomRepeatAt = now + NAV_REPEAT_INTERVAL_MS }
+        }
+
+        // Edge-triggered nav (A=Select, B/Steam=Back, LB/RB=tab-or-set, Y=Help) is defined ONCE in the fixed
+        // [ScMenuNav] table so the interpreter and the editor tooltips can never drift apart.
+        for (c in ScMenuNav.controls) if (rising(s, c.buttonBit)) uiBridge.nav(c.key)
 
         // Right trackpad = pad-mouse cursor over the dialog (the additive Steam-Controller nav option). Runs alongside
         // d-pad nav so either works; complex editor screens are usable by pointing + clicking instead of tab-focusing.
@@ -492,6 +497,8 @@ class ProfileInterpreter(
     }
     private var navHeldDir: ScNavKey? = null
     private var navRepeatAt = 0L
+    private var zoomHeld: ScNavKey? = null
+    private var zoomRepeatAt = 0L
 
     /**
      * Config-driven action-set switching: a [ScOutput.SwitchActionSet] binding swaps the active [profile] when
@@ -629,12 +636,12 @@ class ProfileInterpreter(
         when (mode) {
             is StickMode.RadialMenu -> driveMenu(
                 stickMag(rawX, rawY) >= mode.deadzone, touched, clicked, rawX, rawY,
-                mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, commitOnClick = effectiveCommit(false), menuRt,
+                mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, commitOnClick = false, menuRt,
                 center = mode.center, directional = mode.directional, menuId = menuId,
             )
             is StickMode.TouchMenu -> driveMenu(
                 stickMag(rawX, rawY) >= mode.deadzone, touched, clicked, rawX, rawY,
-                mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, commitOnClick = effectiveCommit(false), menuRt,
+                mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, commitOnClick = false, menuRt,
                 menuId = menuId,
             )
             is StickMode.JoystickMove -> {
@@ -713,17 +720,9 @@ class ProfileInterpreter(
             is PadMode.ScrollWheel -> applyPadScroll(mode, rt, s.has(touchBit), y)
             is PadMode.Joystick -> applyPadJoystick(mode, s.has(touchBit), x, y)
             is PadMode.MouseJoystick -> applyPadMouseJoystick(mode, s.has(touchBit), x, y)
-            is PadMode.RadialMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, effectiveCommit(mode.onClick), rt.menu, center = mode.center, directional = mode.directional, menuId = menuId)
-            is PadMode.TouchMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, effectiveCommit(mode.onClick), rt.menu, menuId = menuId)
+            is PadMode.RadialMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.RADIAL, 0, 0, mode.activation, mode.onClick, rt.menu, center = mode.center, directional = mode.directional, menuId = menuId)
+            is PadMode.TouchMenu -> driveMenu(s.has(touchBit), s.has(touchBit), s.has(clickBit), x, y, mode.slots, ScMenuSpec.Kind.GRID, mode.cols, mode.rows, mode.activation, mode.onClick, rt.menu, menuId = menuId)
         }
-    }
-
-    /** Apply the global menu commit-style override: IMPORTED keeps the menu's own setting ([perMenuOnClick]),
-     *  CLICK forces commit-on-click, RELEASE forces commit-on-(point-and-)release. */
-    private fun effectiveCommit(perMenuOnClick: Boolean): Boolean = when (menuCommit) {
-        ScTuningStore.MENU_COMMIT_CLICK -> true
-        ScTuningStore.MENU_COMMIT_RELEASE -> false
-        else -> perMenuOnClick
     }
 
     // ---- shared Radial/Touch menu engine (pad- or stick-driven) ----
@@ -983,7 +982,7 @@ class ProfileInterpreter(
         // brief spike leaks only a pixel or two. The global "Touchpad deadzone" ([padDeadzone]) sets the radius.
         val dxRaw = (x - rt.lastX).toFloat()
         val dyRaw = (y - rt.lastY).toFloat() // raw pad space (+Y up); screen-Y handled at emit
-        val floor = (padDeadzone ?: mode.jitterFloor).toFloat()
+        val floor = mode.jitterFloor.toFloat()  // per-pad (was globally overridden by ScTuningStore deadzone)
         val dist = hypot(dxRaw, dyRaw)
         if (dist < floor) return
         val ux = dxRaw / dist
@@ -999,8 +998,8 @@ class ProfileInterpreter(
             val rx = rawMoveX * c - rawMoveY * sn; val ry = rawMoveX * sn + rawMoveY * c
             rawMoveX = rx; rawMoveY = ry
         }
-        // Optional low-pass (Touchpad smoothing): EMA the motion to damp frame-to-frame jitter (costs a little lag).
-        val a = ScTuningStore.emaAlpha(padSmoothing)
+        // Optional low-pass (per-pad smoothing): EMA the motion to damp frame-to-frame jitter (costs a little lag).
+        val a = ScTuningStore.emaAlpha(mode.smoothing)
         rt.smoothX = rt.smoothX * (1f - a) + rawMoveX * a
         rt.smoothY = rt.smoothY * (1f - a) + rawMoveY * a
         // Accumulate scaled motion so sub-pixel movement isn't truncated away; emit the integer part, keep remainder.

@@ -2,16 +2,20 @@ package app.gamenative.ui.component.dialog
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,7 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -128,13 +131,21 @@ fun ScNavItem(
     }
     val selected = state.isSelected(line, col)
     LaunchedEffect(selected) { if (selected) runCatching { bring.bringIntoView() } }
-    // A border + tint so the selection reads even on controls that draw their own background (chips, buttons).
-    val shape = RoundedCornerShape(6.dp)
-    val sel = modifier
-        .bringIntoViewRequester(bring)
-        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.22f), shape)
-        .border(2.dp, MaterialTheme.colorScheme.primary, shape)
-    Box(modifier = if (selected) sel else modifier.bringIntoViewRequester(bring)) { content() }
+    // Radius matches the chip buttons (16dp) so the highlight hugs their corners instead of leaving gaps.
+    val shape = RoundedCornerShape(16.dp)
+    Box(
+        modifier = modifier
+            .bringIntoViewRequester(bring)
+            // A subtle fill keeps the selection readable on plain rows (the QuickMenu items sit on their own cards).
+            .then(if (selected) Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), shape) else Modifier)
+            // The QuickMenu's rotating gradient ring, driven synchronously by [selected] (see ScSelectionRing).
+            .scSelectionRing(selected, shape, width = 2.dp),
+    ) {
+        // QuickMenu pattern: white content normally, primary (purple) when selected. Rows/labels that don't set an
+        // explicit color inherit this; chips/summaries that set their own color are unaffected.
+        val contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        CompositionLocalProvider(LocalContentColor provides contentColor) { content() }
+    }
 }
 
 /**
@@ -143,39 +154,65 @@ fun ScNavItem(
  * [ScNavDialogStack] so the SC bridge routes keys here and B runs [onBack]. Optional [onBumper] handles LB/RB. Wrap
  * the dialog's content in this and place [ScNavItem]s inside.
  */
+/**
+ * Captures + holds keyboard focus for a controller-nav dialog root. A freshly-opened Compose Dialog window isn't
+ * focused on frame 1 (so `onPreviewKeyEvent` wouldn't fire), so this hammers `requestFocus` until it lands, then keeps
+ * the node focusable. Bundles the `focusRequester + onFocusChanged + focusable` + retry loop every SC dialog root
+ * repeated; pair it with your own `.onPreviewKeyEvent { … }`.
+ */
+@Composable
+fun Modifier.scCaptureFocus(): Modifier {
+    val focus = remember { FocusRequester() }
+    var hasFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        repeat(80) { if (hasFocus) return@LaunchedEffect; runCatching { focus.requestFocus() }; delay(25) }
+    }
+    return this.focusRequester(focus).onFocusChanged { hasFocus = it.hasFocus }.focusable()
+}
+
 @Composable
 fun ScNavDialogColumn(
     state: ScNavState,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     onBumper: ((Int) -> Unit)? = null,
+    /** Optional Y-button handler (e.g. open a Help dialog); null = ignored. */
+    onHelp: (() -> Unit)? = null,
+    /** Optional Start-button handler (e.g. close the editor back to the game); null = ignored. */
+    onClose: (() -> Unit)? = null,
+    /** When true, the content scrolls inside the [ScScrollbar] (the same auto-hiding accent bar the main bindings list
+     *  uses) instead of the caller adding its own scroll modifier — keeps every SC dialog's scrollbar identical. */
+    scrollable: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val focus = remember { FocusRequester() }
-    var hasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        repeat(80) { if (hasFocus) return@LaunchedEffect; runCatching { focus.requestFocus() }; delay(25) }
-    }
-    Column(
-        modifier = modifier
-            .focusRequester(focus)
-            .onFocusChanged { hasFocus = it.hasFocus }
-            .focusable()
-            .onPreviewKeyEvent { ev ->
-                if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                when (ev.key) {
-                    Key.DirectionDown -> { state.moveVertical(1); true }
-                    Key.DirectionUp -> { state.moveVertical(-1); true }
-                    Key.DirectionRight -> { state.moveHorizontal(1); true }
-                    Key.DirectionLeft -> { state.moveHorizontal(-1); true }
-                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.ButtonA -> { state.activate(); true }
-                    Key.ButtonL1 -> if (onBumper != null) { onBumper(-1); true } else false
-                    Key.ButtonR1 -> if (onBumper != null) { onBumper(1); true } else false
-                    else -> false
-                }
-            },
-    ) {
+    val keyHandling = Modifier
+        .scCaptureFocus()
+        .onPreviewKeyEvent { ev ->
+            if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when (ev.key) {
+                Key.DirectionDown -> { state.moveVertical(1); true }
+                Key.DirectionUp -> { state.moveVertical(-1); true }
+                Key.DirectionRight -> { state.moveHorizontal(1); true }
+                Key.DirectionLeft -> { state.moveHorizontal(-1); true }
+                Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.ButtonA -> { state.activate(); true }
+                Key.ButtonL1 -> if (onBumper != null) { onBumper(-1); true } else false
+                Key.ButtonR1 -> if (onBumper != null) { onBumper(1); true } else false
+                Key.ButtonY -> if (onHelp != null) { onHelp(); true } else false
+                Key.ButtonStart -> if (onClose != null) { onClose(); true } else false
+                else -> false
+            }
+        }
+    val body: @Composable ColumnScope.() -> Unit = {
         ScNavDialogCapture(onBack = onBack)
         content()
+    }
+    if (scrollable) {
+        val scroll = rememberScrollState()
+        ScScrollbar(scroll, modifier) {
+            // Inset the content from the right so the scrollbar (on the outer edge) doesn't overlap chips/rows.
+            Column(Modifier.verticalScroll(scroll).padding(end = 18.dp).then(keyHandling), content = body)
+        }
+    } else {
+        Column(modifier.then(keyHandling), content = body)
     }
 }

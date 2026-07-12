@@ -10,7 +10,7 @@ import kotlin.math.abs
  *   - slide DETENT   = output report 0x82 <side> 01 <gain>   (command 1 = TICK)
  *   - side ids: 0 = LEFT pad, 1 = RIGHT pad (2 is skipped; 3/4 = rumble motors)
  *   - the 0x81 pulse is NON-directional (fires both pads) -> not used for per-pad feedback
- * Haptic reports go out the interrupt-OUT endpoint (see TritonUsb.writeOutputReport).
+ * Reports are written by the transport (over BLE via TritonBle.writeOutputReport) — this class just builds them.
  */
 class TritonHaptics(private val writeOut: (ByteArray) -> Unit) {
     companion object {

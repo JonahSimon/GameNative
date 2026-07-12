@@ -141,6 +141,17 @@ class ScProfileEditorTest {
         assertEquals(Activator.Turbo(200), rebuilt.buttons[ScSource.A.bit]!!.activator)
     }
 
+    @Test
+    fun `pad-mouse smoothing and jitter floor round-trip`() {
+        // Folded from the old global "Touchpad & menus" tuning → per-pad. Non-default values catch a dropped mapping.
+        val pad = EditAnalog(mode = AnalogMode.MOUSE, smoothingPct = 40, jitterFloor = 55).toPadMode() as PadMode.Mouse
+        assertEquals(40, pad.smoothing)
+        assertEquals(55, pad.jitterFloor)
+        val back = EditAnalog.fromPad(pad)!!
+        assertEquals(40, back.smoothingPct)
+        assertEquals(55, back.jitterFloor)
+    }
+
     // ---- Phase 5: trigger / gyro / haptics ----
 
     @Test

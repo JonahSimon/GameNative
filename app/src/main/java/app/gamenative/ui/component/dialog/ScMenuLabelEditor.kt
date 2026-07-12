@@ -10,12 +10,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -108,19 +106,16 @@ fun ScMenuLabelEditorDialog(
                         modifier = Modifier.padding(vertical = 16.dp),
                     )
                 } else {
-                    Column(modifier = Modifier.weight(1f, fill = false).verticalScrollWithBar()) {
+                    val listScroll = rememberScrollState()
+                    ScScrollbar(listScroll, Modifier.weight(1f, fill = false)) {
+                      Column(modifier = Modifier.verticalScroll(listScroll)) {
                         var navLine = 0
                         for (menu in menus) {
                             val header = buildString {
                                 append(menu.location.label); append(" · "); append(menu.kind)
                                 if (multiSet) append(" (set ${menu.setId})")
                             }
-                            Text(
-                                header,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
-                            )
+                            ScSectionHeader(header)
                             menu.slotDefaults.forEachIndexed { i, default ->
                                 val key = "${menu.setId}|${menu.location.name}|$i"
                                 ScNavItem(nav, line = navLine++, modifier = Modifier.fillMaxWidth(), onActivate = { editingKey = key }) {
@@ -135,6 +130,7 @@ fun ScMenuLabelEditorDialog(
                                 }
                             }
                         }
+                      }
                     }
                 }
 
@@ -145,12 +141,12 @@ fun ScMenuLabelEditorDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     ScNavItem(nav, line = 9000, col = 0, onActivate = onDismiss) {
-                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                        ScActionChip("Cancel", onClick = onDismiss)
                     }
                     Spacer(Modifier.width(8.dp))
                     if (menus.isNotEmpty()) {
                         ScNavItem(nav, line = 9000, col = 1, onActivate = doSave) {
-                            Button(onClick = doSave) { Text("Save") }
+                            ScActionChip("Save", onClick = doSave, filled = true)
                         }
                     }
                 }

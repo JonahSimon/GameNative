@@ -4,8 +4,6 @@ import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -111,7 +109,6 @@ object QuickMenuAction {
     const val DISABLE_MOUSE = 8
     // Steam Controller (Triton) live editors — shown in the CONTROLLER tab only when an SC is connected.
     const val SC_BINDINGS = 9
-    const val SC_TUNING = 11
     const val SC_LAYOUT = 12
     // Single root entry that opens the Steam Controller editor hub (lists the editors above).
     const val SC_ROOT = 13

@@ -17,8 +17,6 @@ import app.gamenative.enums.LoginResult
 import app.gamenative.enums.PathType
 import app.gamenative.events.AndroidEvent
 import app.gamenative.events.SteamEvent
-import app.gamenative.ui.enums.Orientation
-import java.util.EnumSet
 import app.gamenative.service.ActiveGameRegistry
 import app.gamenative.service.SteamService
 import app.gamenative.service.amazon.AmazonService
@@ -459,6 +457,9 @@ class MainViewModel @Inject constructor(
 
     fun setDiagnostics(value: Boolean) {
         _state.update { it.copy(diagnostics = value) }
+        // Persist so setupXEnvironment can read it directly (see PrefManager.wrapperDiagnostics) rather than the
+        // XServerScreen composable threading it as a parameter, which tripped an ART VerifyError on that huge method.
+        PrefManager.wrapperDiagnostics = value
     }
 
     fun launchApp(context: Context, appId: String) {
