@@ -3552,6 +3552,7 @@ private fun setupXEnvironment(
                 displayNameMap = displayNameMap,
                 iconUrlMap = iconUrlMap,
                 configDirectory = configDirectory,
+                context = context,
             ).also { it.start() }
         } else {
             Timber.tag("achievements").w("Skipping achievement watcher, no steam_settings dir found for appId=$appId")
