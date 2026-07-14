@@ -82,7 +82,8 @@ object ScConfigStore {
     private fun writeRegistry(context: Context, key: String, reg: ScConfigRegistry): Boolean =
         runCatching {
             val target = manifestFile(context, key)
-            val tmp = File(target.parentFile, "${target.name}.tmp")
+            // Unique temp name so concurrent writes (autosave + a UI action) can't clobber each other's temp.
+            val tmp = File.createTempFile("${target.name}-", ".tmp", target.parentFile)
             tmp.writeText(json.encodeToString(ScConfigRegistry.serializer(), reg))
             if (!tmp.renameTo(target)) { target.writeText(tmp.readText()); tmp.delete() }
             true

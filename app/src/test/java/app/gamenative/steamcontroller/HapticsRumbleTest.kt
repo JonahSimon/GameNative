@@ -64,7 +64,10 @@ class HapticsRumbleTest {
         val h = TritonHaptics { out.add(it) }
         val cfg = HapticSettings()
         h.update(rState(RTOUCH, 0, 0), prevButtons = 0, cfg)
-        h.update(rState(RTOUCH, cfg.moveNoise - 1, 0), prevButtons = RTOUCH, cfg)  // sub-noise wobble
+        // Feed enough sub-noise steps that their sum crosses detentStep — if the filter accumulated jitter
+        // instead of rejecting it, this would fire a tick. Each per-report delta stays below moveNoise.
+        val step = cfg.moveNoise - 1
+        for (i in 1..(cfg.detentStep / step) + 1) h.update(rState(RTOUCH, i * step, 0), prevButtons = RTOUCH, cfg)
         assertEquals(0, out.count(TritonHaptics.CMD_TICK))
     }
 }
