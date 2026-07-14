@@ -803,12 +803,19 @@ object SteamControllerProfileImporter {
     private fun readOverlap(s: VdfObject?): Float =
         (s?.getString("overlap_region")?.toIntOrNull() ?: 4000) / 32768f
 
-    /** Response curve from Steam `curve_exponent` (preset ordinal) or `custom_curve_exponent` (25..375, 200≈linear).
-     *  ponytail: the preset int->curve map is inferred from Steam's UI order (Linear/Aggressive/Relaxed/Wide/ExtraWide)
-     *  matching our enum ordinal — confirm against a UI capture if a curve feels off; the custom slider is bucketed. */
+    /** Response curve from Steam `curve_exponent` (a literal power exponent, commonly 1/2/4 — NOT an enum ordinal)
+     *  or `custom_curve_exponent` (25..375, 200≈linear). Since our curves are literal powers (LINEAR=m¹,
+     *  AGGRESSIVE=m², WIDE=m³) we map the exponent to the matching power; 4 has no exact curve so it takes the
+     *  steepest we model (WIDE). Confirm feel against a capture if a curve seems off; the custom slider is bucketed. */
     private fun readCurve(s: VdfObject?): ResponseCurve {
         s?.getString("curve_exponent")?.toIntOrNull()?.let {
-            return ResponseCurve.values().getOrElse(it) { ResponseCurve.LINEAR }
+            return when (it) {
+                1 -> ResponseCurve.LINEAR         // m¹
+                2 -> ResponseCurve.AGGRESSIVE     // m²
+                3 -> ResponseCurve.WIDE           // m³
+                4 -> ResponseCurve.WIDE           // steeper than we model; nearest
+                else -> ResponseCurve.LINEAR
+            }
         }
         val custom = s?.getString("custom_curve_exponent")?.toIntOrNull() ?: return ResponseCurve.LINEAR
         return when { // 200 = linear; lower = steeper (aggressive), higher = flatter (relaxed/wide)

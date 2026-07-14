@@ -77,7 +77,8 @@ fun ScOverlayEditorDialog(
     }
     // Placement selector = the present menus (no aggregate "All" — you place each individually). Default to the first.
     val menuOptions: List<ScMenuLocation?> = if (presentMenus.isEmpty()) listOf(null) else presentMenus.map { it.location }
-    var selectedMenu by remember { mutableStateOf(menuOptions.first()) }
+    // Keyed by storeKey so switching configs re-seeds the selection from the new store's menus (never a stale one).
+    var selectedMenu by remember(storeKey) { mutableStateOf(menuOptions.first()) }
     fun stored(sel: ScMenuLocation?): ScOverlayLayout = when {
         keyboard -> ScOverlayStore.forKeyboard(context, storeKey)
         sel != null -> ScOverlayStore.forMenu(context, storeKey, sel.name)

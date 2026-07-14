@@ -676,7 +676,19 @@ public class WinHandler {
     private void startVibration(short lowFreq, short highFreq) {
         // A live Steam Controller owns rumble output (its own motors); skip the phone/controller fallback.
         RumbleForwarder fwd = scRumbleForwarder;
-        if (fwd != null) { fwd.onRumble(lowFreq, highFreq); return; }
+        if (fwd != null) {
+            // If a local phone/controller buzz was still in flight when the SC took over, cancel it so it
+            // doesn't linger for up to a second alongside the controller's own rumble.
+            if (isRumbling) {
+                Vibrator phoneVibrator = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
+                if (phoneVibrator != null) phoneVibrator.cancel();
+                InputDevice device = getCurrentPhysicalControllerDevice();
+                if (device != null && device.getVibrator() != null) device.getVibrator().cancel();
+                isRumbling = false;
+            }
+            fwd.onRumble(lowFreq, highFreq);
+            return;
+        }
         // --- Step 1: Calculate the base amplitude once at the top ---
         int unsignedLowFreq = lowFreq & 0xFFFF;
         int unsignedHighFreq = highFreq & 0xFFFF;

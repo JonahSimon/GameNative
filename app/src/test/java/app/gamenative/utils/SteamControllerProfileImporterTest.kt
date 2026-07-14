@@ -117,8 +117,10 @@ class SteamControllerProfileImporterTest {
             """.trimIndent()
             return SteamControllerProfileImporter.importConfig(vdf).defaultProfile().leftStick
         }
-        // curve_exponent ordinal aligns with ResponseCurve (0=LINEAR,1=AGGRESSIVE,2=RELAXED,...).
-        assertEquals(ResponseCurve.RELAXED, (stickWith(""" "curve_exponent" "2" """) as StickMode.JoystickMove).curve)
+        // curve_exponent is the literal power exponent: 1=LINEAR (m¹), 2=AGGRESSIVE (m²), 3=WIDE (m³).
+        assertEquals(ResponseCurve.LINEAR, (stickWith(""" "curve_exponent" "1" """) as StickMode.JoystickMove).curve)
+        assertEquals(ResponseCurve.AGGRESSIVE, (stickWith(""" "curve_exponent" "2" """) as StickMode.JoystickMove).curve)
+        assertEquals(ResponseCurve.WIDE, (stickWith(""" "curve_exponent" "3" """) as StickMode.JoystickMove).curve)
         assertEquals(ResponseCurve.LINEAR, (stickWith("") as StickMode.JoystickMove).curve) // absent -> linear
         // custom slider: 200 ~ linear, low ~ aggressive.
         assertEquals(ResponseCurve.AGGRESSIVE, (stickWith(""" "custom_curve_exponent" "100" """) as StickMode.JoystickMove).curve)

@@ -162,7 +162,10 @@ fun ScScrollbar(
                                 change.consume()
                                 val deltaProgress = dragAmount.y / maxOffset.coerceAtLeast(1f)
                                 dragProgress = (dragProgress + deltaProgress).coerceIn(0f, 1f)
-                                scope.launch { scrollState.scrollTo((dragProgress * maxValue).roundToInt()) }
+                                // dispatchRawDelta is the non-suspending pointer-scroll API — no coroutine per
+                                // drag event (unlike scrollTo). Verify scroll direction/scale on-device.
+                                val target = (dragProgress * maxValue).roundToInt()
+                                scrollState.dispatchRawDelta((target - scrollState.value).toFloat())
                             },
                         )
                     },

@@ -77,8 +77,16 @@ object ScConfigStore {
         return migrateLegacy(context, key)
     }
 
+    // Write to a temp file then rename over the manifest, so a crash/kill mid-write can't leave a truncated
+    // <key>.configs.json (live autosave/reload rewrites this often).
     private fun writeRegistry(context: Context, key: String, reg: ScConfigRegistry): Boolean =
-        runCatching { manifestFile(context, key).writeText(json.encodeToString(ScConfigRegistry.serializer(), reg)); true }
+        runCatching {
+            val target = manifestFile(context, key)
+            val tmp = File(target.parentFile, "${target.name}.tmp")
+            tmp.writeText(json.encodeToString(ScConfigRegistry.serializer(), reg))
+            if (!tmp.renameTo(target)) { target.writeText(tmp.readText()); tmp.delete() }
+            true
+        }
             .onFailure { Log.w(TAG, "writeRegistry($key) failed: ${it.message}") }
             .getOrDefault(false)
 

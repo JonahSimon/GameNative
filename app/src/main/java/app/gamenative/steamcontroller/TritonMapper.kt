@@ -40,13 +40,15 @@ class TritonMapper(
         private const val RUMBLE_RESEND_MS = 40L
     }
 
-    private var ble: TritonBle? = null
+    // ble is read from the BLE binder thread (via the haptics writeOut lambda) but written on the main thread;
+    // interpreter/bleRetries are touched from both BLE callbacks and the main handler — mark volatile for visibility.
+    @Volatile private var ble: TritonBle? = null
     private var haptics: TritonHaptics? = null
-    private var interpreter: ProfileInterpreter? = null
+    @Volatile private var interpreter: ProfileInterpreter? = null
     @Volatile private var running = false
 
     private val bleHandler = Handler(context.mainLooper)
-    private var bleRetries = 0
+    @Volatile private var bleRetries = 0
 
     // Game rumble forwarded from WinHandler's poller (another thread) → the controller's motors. Held on the
     // main looper alongside every other BLE write. The resend loop refreshes a non-zero rumble before the

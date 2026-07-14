@@ -63,18 +63,6 @@ object TritonProtocol {
         (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8) or
             ((b[o + 2].toInt() and 0xFF) shl 16) or ((b[o + 3].toInt() and 0xFF) shl 24)
 
-    fun isStateReport(type: Int) = type == ID_STATE || type == ID_STATE_BLE || type == ID_STATE_TS
-
-    /**
-     * Decode a raw USB interrupt report (64-byte; `buf[0]`=report type, `buf[1]`=seq) into a TritonState,
-     * or null if it isn't a controller-state report.
-     */
-    fun decodeState(buf: ByteArray, len: Int): TritonState? {
-        if (len < 45) return null
-        if (!isStateReport(buf[0].toInt() and 0xFF)) return null
-        return decodeFrom(buf, 1)  // payload (seq) starts at buf[1]
-    }
-
     /**
      * Decode a BLE GATT input-characteristic value. The BLE transport delivers the SAME `TritonMTUNoQuat`
      * payload but **without** the leading USB report-type byte, so seq is at offset 0 (buttons at offset 1).
@@ -101,21 +89,6 @@ object TritonProtocol {
         s.gyroX = s16(buf, p + 39); s.gyroY = s16(buf, p + 41); s.gyroZ = s16(buf, p + 43)
         return s
     }
-
-    /** 64-byte SET_REPORT payload writing a single controller setting (lizard-off, IMU mode, etc.). */
-    private fun settingReport(settingNum: Int, value: Int): ByteArray {
-        val b = ByteArray(64)
-        b[0] = 0x01                              // report id
-        b[1] = ID_SET_SETTINGS_VALUES.toByte()   // header.type
-        b[2] = 3                                 // header.length = sizeof(ControllerSetting)
-        b[3] = settingNum.toByte()
-        b[4] = (value and 0xFF).toByte()
-        b[5] = ((value shr 8) and 0xFF).toByte()
-        return b
-    }
-
-    fun lizardOffReport(): ByteArray = settingReport(SETTING_LIZARD_MODE, LIZARD_MODE_OFF)
-    fun imuEnableReport(): ByteArray = settingReport(SETTING_IMU_MODE, IMU_RAW_ACCEL or IMU_RAW_GYRO)
 
     /**
      * BLE settings write (to the control characteristic 100f6c34): same FeatureReportMsg as USB but WITHOUT

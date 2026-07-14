@@ -255,11 +255,6 @@ class MenuModesTest {
         assertEquals("center labelled from the stick-click action", "Wait", movement.center?.label)
     }
 
-    private fun load(name: String): String =
-        (javaClass.classLoader ?: ClassLoader.getSystemClassLoader())
-            .getResourceAsStream("sc/$name")?.use { it.readBytes().toString(Charsets.UTF_8) }
-            ?: error("missing test resource sc/$name")
-
     @Test
     fun `importer turns ToME4 pad touch_menu into a real TouchMenu (no longer dropped)`() {
         // ToME4's left trackpad is a reference->touch_menu hotbar grid; it used to import as None.

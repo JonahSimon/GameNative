@@ -86,6 +86,10 @@ class ScKeyboardTest {
         kb.update(right(enter, click = false)); kb.update(right(enter, click = true))
         assertEquals(1, sink.keyPresses(XKeycode.KEY_ENTER))
 
+        val space = ScKeyboardLayout.RIGHT.indexOf(KbKey.Space)
+        kb.update(right(space, click = false)); kb.update(right(space, click = true))
+        assertEquals(1, sink.keyPresses(XKeycode.KEY_SPACE))
+
         val bksp = ScKeyboardLayout.RIGHT.indexOf(KbKey.Backspace)
         kb.update(right(bksp, click = false)); kb.update(right(bksp, click = true))
         assertEquals(1, sink.keyPresses(XKeycode.KEY_BKSP))

@@ -34,4 +34,37 @@ class HapticsRumbleTest {
         assertArrayEquals(byteArrayOf(0xFF.toByte(), 0xFF.toByte()), r.copyOfRange(4, 6))
         assertArrayEquals(byteArrayOf(0xFF.toByte(), 0xFF.toByte()), r.copyOfRange(7, 9))
     }
+
+    // ---- update()/handlePad(): the stateful click + slide-detent path (right pad) ----
+    private val RTOUCH = TritonProtocol.BTN_RPAD_TOUCH
+    private val RCLICK = TritonProtocol.BTN_RPAD_CLICK
+    private fun rState(buttons: Int, x: Int = 0, y: Int = 0) =
+        TritonState().apply { this.buttons = buttons; rightPadX = x; rightPadY = y }
+    private fun List<ByteArray>.count(cmd: Int) =
+        count { it.size >= 3 && (it[0].toInt() and 0xFF) == TritonHaptics.ID_OUT_HAPTIC_COMMAND && it[2].toInt() == cmd }
+
+    @Test fun `fresh right-pad click fires exactly one click`() {
+        val out = mutableListOf<ByteArray>()
+        TritonHaptics { out.add(it) }.update(rState(RTOUCH or RCLICK, 100, 100), prevButtons = 0, HapticSettings())
+        assertEquals(1, out.count(TritonHaptics.CMD_CLICK))
+        assertEquals(0, out.count(TritonHaptics.CMD_TICK)) // touch-down alone doesn't tick
+    }
+
+    @Test fun `sliding past detentStep fires a detent tick`() {
+        val out = mutableListOf<ByteArray>()
+        val h = TritonHaptics { out.add(it) }
+        val cfg = HapticSettings()
+        h.update(rState(RTOUCH, 0, 0), prevButtons = 0, cfg)                    // touch down (accum reset)
+        h.update(rState(RTOUCH, cfg.detentStep, 0), prevButtons = RTOUCH, cfg)  // slide one detent's worth
+        assertEquals(1, out.count(TritonHaptics.CMD_TICK))
+    }
+
+    @Test fun `jitter below moveNoise fires no tick`() {
+        val out = mutableListOf<ByteArray>()
+        val h = TritonHaptics { out.add(it) }
+        val cfg = HapticSettings()
+        h.update(rState(RTOUCH, 0, 0), prevButtons = 0, cfg)
+        h.update(rState(RTOUCH, cfg.moveNoise - 1, 0), prevButtons = RTOUCH, cfg)  // sub-noise wobble
+        assertEquals(0, out.count(TritonHaptics.CMD_TICK))
+    }
 }

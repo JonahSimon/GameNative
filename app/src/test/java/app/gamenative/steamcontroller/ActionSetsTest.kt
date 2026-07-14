@@ -16,11 +16,6 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class ActionSetsTest {
 
-    private fun load(name: String): String =
-        (javaClass.classLoader ?: ClassLoader.getSystemClassLoader())
-            .getResourceAsStream("sc/$name")?.use { it.readBytes().toString(Charsets.UTF_8) }
-            ?: error("missing test resource sc/$name")
-
     private fun state(buttons: Int): TritonState = TritonState().apply { this.buttons = buttons }
 
     @Test

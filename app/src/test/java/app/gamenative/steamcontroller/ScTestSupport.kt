@@ -87,10 +87,17 @@ object TraceReader {
             ?: error("test resource not found: $path")
 }
 
+/** Load a text test resource from `sc/` (shared by the importer/engine tests; was duplicated per test class). */
+fun load(name: String): String =
+    (RecordingSink::class.java.classLoader ?: ClassLoader.getSystemClassLoader())
+        .getResourceAsStream("sc/$name")?.use { it.readBytes().toString(Charsets.UTF_8) }
+        ?: error("missing test resource sc/$name")
+
 /**
- * Mode-shift / layer / preset config used by the importer + config-store unit tests. Press map:
- * A/B -> keys 1/2 in the base set; hold LB -> Overlay layer (A -> 8); tap RB -> Combat preset (A -> 3);
- * hold the lower-left back paddle -> mode-shift (A -> 9). (Formerly TritonBleEngineSelfTest.SMOKE_CONFIG,
+ * Structural fixture exercising all three build-step-3 mechanisms — an action layer (Overlay), a preset switch
+ * (CHANGE_PRESET), and a mode_shift — so the importer decodes multiple sets + a layer + a mode-shift overlay. The
+ * consuming tests assert the decoded set/layer/overlay STRUCTURE, not runtime press outcomes, so the exact
+ * controller_action target numbers below aren't behaviourally asserted. (Formerly TritonBleEngineSelfTest.SMOKE_CONFIG,
  * relocated to the test source set when the on-device self-test harness was removed.)
  */
 const val SMOKE_CONFIG = """
