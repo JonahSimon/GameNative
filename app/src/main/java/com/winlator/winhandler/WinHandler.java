@@ -500,6 +500,21 @@ public class WinHandler {
             datagramSocket.close();
             this.socket = null;
         }
+        try {
+            if (gamepadRaf != null) {
+                gamepadRaf.close();
+                gamepadRaf = null;
+            }
+            gamepadBuffer = null;
+            for (int i = 0; i < extraGamepadRafs.length; i++) {
+                if (extraGamepadRafs[i] != null) {
+                    extraGamepadRafs[i].close();
+                    extraGamepadRafs[i] = null;
+                }
+                extraGamepadBuffers[i] = null;
+            }
+        } catch (IOException ignored) {
+        }
         synchronized (this.actions) {
             this.actions.notify();
         }
