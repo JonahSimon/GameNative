@@ -931,7 +931,7 @@ fun XServerScreen(
         controllerManager.autoAssignConnectedDevices()
         hasPhysicalController = controllerManager.getDetectedDevices().isNotEmpty()
         controllerSlotStatusVersion++
-        xServerView?.getxServer()?.winHandler?.refreshControllerMappings()
+        xServerView?.getxServer()?.winHandler?.refreshControllerMappingsForHotplug()
 
         if (!usingScreenMirror &&
             !hasInternalTouchpad && !hasPhysicalMouse && !hasPhysicalKeyboard && !hasPhysicalController &&
@@ -1005,7 +1005,7 @@ fun XServerScreen(
             ControllerManager.getInstance().onDeviceConnected(device.id)
             controllerSlotStatusVersion++
             xServerView?.getxServer()?.winHandler?.setCurrentController(device.id)
-            xServerView?.getxServer()?.winHandler?.refreshControllerMappings()
+            xServerView?.getxServer()?.winHandler?.refreshControllerMappingsForHotplug()
             if (!showElementEditor && !keepPausedForEditor && !showQuickMenu && !isEditMode &&
                 !container.isTouchscreenMode &&
                 !hasUpdatedScreenGamepad) {
