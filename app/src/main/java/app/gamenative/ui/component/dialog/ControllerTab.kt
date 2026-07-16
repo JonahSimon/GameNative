@@ -2,7 +2,12 @@ package app.gamenative.ui.component.dialog
 
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
+import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.ui.component.settings.SettingsListDropdown
 import app.gamenative.ui.theme.settingsTileColors
@@ -11,9 +16,15 @@ import com.alorma.compose.settings.ui.SettingsGroup
 import com.alorma.compose.settings.ui.SettingsSwitch
 import com.winlator.container.Container
 
+// Steam Controller (Triton) config is intentionally NOT here — it lives entirely in the in-game QuickMenu so it
+// never bleeds into the generic container/controller settings (it matters to almost no one there). See
+// XServerScreen's ScLiveEditorDialogs (Manage configs / Bindings / Labels / Tuning / Overlay / Keyboard).
 @Composable
 fun ControllerTabContent(state: ContainerConfigState, default: Boolean) {
     val config = state.config.value
+    var showControllerDebugMenu by remember {
+        mutableStateOf(PrefManager.showControllerDebugMenu)
+    }
 
     SettingsGroup() {
         if (!default) {
@@ -49,6 +60,16 @@ fun ControllerTabContent(state: ContainerConfigState, default: Boolean) {
             items = listOf("Standard", "XInput Mapper"),
             onItemSelected = { index ->
                 state.config.value = config.copy(dinputMapperType = if (index == 0) 1 else 2)
+            },
+        )
+        SettingsSwitch(
+            colors = settingsTileColorsAlt(),
+            title = { Text(text = stringResource(R.string.show_controller_debug_menu)) },
+            subtitle = { Text(text = stringResource(R.string.show_controller_debug_menu_subtitle)) },
+            state = showControllerDebugMenu,
+            onCheckedChange = {
+                showControllerDebugMenu = it
+                PrefManager.showControllerDebugMenu = it
             },
         )
         SettingsListDropdown(

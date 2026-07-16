@@ -1448,6 +1448,7 @@ fun PluviaMain(
                             )
                         },
                         isOffline = isOffline,
+                        isSteamConnected = state.isSteamConnected,
                     )
                 }
 
@@ -1479,7 +1480,6 @@ fun PluviaMain(
                         appId = state.launchedAppId,
                         bootToContainer = state.bootToContainer,
                         testGraphics = state.testGraphics,
-                        diagnostics = state.diagnostics,
                         isOffline = xServerIsOffline,
                         registerBackAction = { cb ->
                             Timber.d("registerBackAction called: $cb")

@@ -26,6 +26,7 @@ import android.view.InputDevice
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import app.gamenative.BuildConfig
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,7 +36,10 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,6 +59,8 @@ import androidx.compose.runtime.setValue
 import app.gamenative.MainActivity
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -65,6 +71,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -101,6 +109,10 @@ import app.gamenative.service.epic.EpicService
 import app.gamenative.service.gog.GOGService
 import app.gamenative.ui.component.QuickMenu
 import app.gamenative.ui.component.QuickMenuAction
+import app.gamenative.ui.component.dialog.ScConfigManagerDialog
+import app.gamenative.ui.component.dialog.ScOverlayEditorDialog
+import app.gamenative.ui.component.dialog.ScOverlayTarget
+import app.gamenative.ui.component.dialog.SteamControllerBindingEditorDialog
 import app.gamenative.ui.component.parseBooleanExtra
 import app.gamenative.ui.component.parsePositiveFpsLimit
 import app.gamenative.ui.data.PerformanceHudConfig
@@ -264,6 +276,29 @@ private data class XServerViewReleaseBinding(
     val windowModificationListener: WindowManager.OnWindowModificationListener,
 )
 
+private data class ControllerSlotUiState(
+    val slotIndex: Int,
+    val enabled: Boolean,
+    val status: String,
+    val controllerName: String,
+    val deviceId: String,
+    val androidInputSource: String,
+    val guestInputMethod: String,
+)
+
+private data class ConnectedControllerUiState(
+    val name: String,
+    val deviceId: String,
+    val slotLabel: String,
+    val androidInputSource: String,
+)
+
+private data class ControllerStatusSnapshot(
+    val slots: List<ControllerSlotUiState>,
+    val connectedControllers: List<ConnectedControllerUiState>,
+    val guestApi: String,
+)
+
 private val CORE_WINE_PROCESSES = setOf(
     "wineserver",
     "services",
@@ -314,7 +349,9 @@ fun XServerScreen(
     appId: String,
     bootToContainer: Boolean,
     testGraphics: Boolean = false,
-    diagnostics: Boolean = false,
+    // NOTE: `diagnostics` is intentionally NOT a parameter here — read it via PrefManager.wrapperDiagnostics at the
+    // setupXEnvironment call below. Adding a parameter to this (very large) composable pushed the method past ART's
+    // bytecode-verifier limit → VerifyError / crash on every game launch. Keep new inputs out of this signature.
     isOffline: Boolean = false,
     registerBackAction: ( ( ) -> Unit ) -> Unit,
     navigateBack: () -> Unit,
@@ -445,6 +482,7 @@ fun XServerScreen(
 
     var win32AppWorkarounds: Win32AppWorkarounds? by remember { mutableStateOf(null) }
     var physicalControllerHandler: PhysicalControllerHandler? by remember { mutableStateOf(null) }
+    var tritonMapper: app.gamenative.steamcontroller.TritonMapper? by remember { mutableStateOf(null) }
     var exitWatchJob: Job? by remember { mutableStateOf(null) }
     val keyboardEscMenuHandler = remember(scope) { KeyboardEscMenuHandler(scope) }
 
@@ -452,6 +490,8 @@ fun XServerScreen(
         onDispose {
             physicalControllerHandler?.cleanup()
             physicalControllerHandler = null
+            tritonMapper?.stop()
+            tritonMapper = null
             exitWatchJob?.cancel()
             exitWatchJob = null
             keyboardEscMenuHandler.cancel()
@@ -468,6 +508,16 @@ fun XServerScreen(
     var showElementEditor by remember { mutableStateOf(false) }
     var elementToEdit by remember { mutableStateOf<com.winlator.inputcontrols.ControlElement?>(null) }
     var showPhysicalControllerDialog by remember { mutableStateOf(false) }
+    // Steam Controller in-game live editors (shown from the QuickMenu CONTROLLER tab when an SC is connected).
+    var showScRoot by remember { mutableStateOf(false) }
+    var showScBindings by remember { mutableStateOf(false) }
+    var showScLayout by remember { mutableStateOf(false) }
+    var showScKeyboard by remember { mutableStateOf(false) }
+    var showScConfigs by remember { mutableStateOf(false) }
+    // When a sub-editor is opened from the SC root hub, closing it (B / Back) should return to the hub — one level
+    // at a time — instead of resuming the game. This flag records "came from the hub" so the sub-editor's dismiss
+    // reopens the hub rather than calling scEditorDismiss (which would drop straight back to the game).
+    var scReturnToRoot by remember { mutableStateOf(false) }
     var showPlayingBlockedDialog by rememberSaveable { mutableStateOf(false) }
     var playingBlockedRemoteName by rememberSaveable { mutableStateOf<String?>(null) }
     var showTouchGestureDialog by remember { mutableStateOf(false) }
@@ -497,6 +547,7 @@ fun XServerScreen(
     var quickMenuWineProcesses by remember { mutableStateOf<List<ProcessInfo>>(emptyList()) }
     var quickMenuWineProcessesLoading by remember { mutableStateOf(false) }
     var hasPhysicalController by remember { mutableStateOf(false) }
+    var controllerSlotStatusVersion by remember { mutableIntStateOf(0) }
     var keepPausedForEditor by remember { mutableStateOf(false) }
     var hasPhysicalKeyboard by remember { mutableStateOf(false) }
     var hasPhysicalMouse by remember { mutableStateOf(false) }
@@ -756,6 +807,10 @@ fun XServerScreen(
             Timber.d("Skipping overlay suspend due to suspend policy=never")
             return
         }
+        // Stop the X-server key auto-repeat (a main-thread Handler) BEFORE suspending the guest. Otherwise, if a key
+        // is still "held" when the guest is SIGSTOPped, the auto-repeat's next blocking ClientSocket.write to the
+        // non-draining guest hangs the UI thread -> ANR (seen when opening the SC editor with a key still down).
+        runCatching { xServerView?.getxServer()?.inputDeviceManager?.onGuestSuspended() }
         PluviaApp.xEnvironment?.onPause()
         PluviaApp.isOverlayPaused = true
     }
@@ -898,8 +953,10 @@ fun XServerScreen(
             isMouse && !device.isVirtual && isExternal
         }
         val controllerManager = ControllerManager.getInstance()
-        controllerManager.scanForDevices()
+        controllerManager.autoAssignConnectedDevices()
         hasPhysicalController = controllerManager.getDetectedDevices().isNotEmpty()
+        controllerSlotStatusVersion++
+        xServerView?.getxServer()?.winHandler?.refreshControllerMappingsForHotplug()
 
         if (!usingScreenMirror &&
             !hasInternalTouchpad && !hasPhysicalMouse && !hasPhysicalKeyboard && !hasPhysicalController &&
@@ -970,7 +1027,10 @@ fun XServerScreen(
         }
         val isGamepad = ExternalController.isGameController(device)
         if (isGamepad) {
-            xServerView!!.getxServer().winHandler.setCurrentController(device.id);
+            ControllerManager.getInstance().onDeviceConnected(device.id)
+            controllerSlotStatusVersion++
+            xServerView?.getxServer()?.winHandler?.setCurrentController(device.id)
+            xServerView?.getxServer()?.winHandler?.refreshControllerMappingsForHotplug()
             if (!showElementEditor && !keepPausedForEditor && !showQuickMenu && !isEditMode &&
                 !container.isTouchscreenMode &&
                 !hasUpdatedScreenGamepad) {
@@ -1233,6 +1293,12 @@ fun XServerScreen(
                 true
             }
 
+            // Steam Controller live editors: open the editor; on close they persist + call tritonMapper.reload()
+            // so the change applies to the running game with no relaunch.
+            QuickMenuAction.SC_ROOT -> { keepPausedForEditor = true; showScRoot = true; true }
+            QuickMenuAction.SC_BINDINGS -> { keepPausedForEditor = true; showScBindings = true; true }
+            QuickMenuAction.SC_LAYOUT -> { keepPausedForEditor = true; showScLayout = true; true }
+
             QuickMenuAction.PERFORMANCE_HUD -> {
                 val enabled = !isPerformanceHudEnabled
                 isPerformanceHudEnabled = enabled
@@ -1316,16 +1382,19 @@ fun XServerScreen(
 
         val deviceListener = object : InputManager.InputDeviceListener {
             override fun onInputDeviceAdded(deviceId: Int) {
+                ControllerManager.getInstance().onDeviceConnected(deviceId)
+                scanForExternalDevices()
                 val device = InputDevice.getDevice(deviceId) ?: return
                 evaluateDevice(device)
             }
 
             override fun onInputDeviceRemoved(deviceId: Int) {
-                // Re-scan since we don't know which type was removed
+                ControllerManager.getInstance().onDeviceDisconnected(deviceId)
                 scanForExternalDevices()
             }
 
             override fun onInputDeviceChanged(deviceId: Int) {
+                ControllerManager.getInstance().onDeviceConnected(deviceId)
                 scanForExternalDevices()
                 val device = InputDevice.getDevice(deviceId) ?: return
                 evaluateDevice(device)
@@ -1413,11 +1482,17 @@ fun XServerScreen(
         } else {
             var handled = false
             if (isGamepad) {
-                xServerView!!.getxServer().winHandler.setCurrentController(it.event.device.id);
-                handled = physicalControllerHandler?.onKeyEvent(it.event) == true
-                if (!handled) handled = PluviaApp.inputControlsView?.onKeyEvent(it.event) == true
-                // Final fallback to WinHandler passthrough
-                if (!handled) handled = xServerView!!.getxServer().winHandler.onKeyEvent(it.event)
+                val winHandler = xServerView!!.getxServer().winHandler
+                val assignedSlot = ControllerManager.getInstance().getSlotForDevice(it.event.device.id)
+                if (assignedSlot >= 0) {
+                    handled = winHandler.onKeyEvent(it.event)
+                } else {
+                    winHandler.setCurrentController(it.event.device.id)
+                    handled = physicalControllerHandler?.onKeyEvent(it.event) == true
+                    if (!handled) handled = PluviaApp.inputControlsView?.onKeyEvent(it.event) == true
+                    // Final fallback to WinHandler passthrough
+                    if (!handled) handled = winHandler.onKeyEvent(it.event)
+                }
             }
             if (!handled && isKeyboard) {
                 val isShiftEscPressed = it.event.keyCode == KeyEvent.KEYCODE_ESCAPE &&
@@ -1448,6 +1523,8 @@ fun XServerScreen(
             handled
         }
     }
+
+
     val onMotionEvent: (AndroidEvent.MotionEvent) -> Boolean = {
         val isGamepad = ExternalController.isGameController(it.event?.device)
 
@@ -1457,11 +1534,17 @@ fun XServerScreen(
         } else {
             var handled = false
             if (isGamepad && it.event != null) {
-                xServerView!!.getxServer().winHandler.setCurrentController(it.event.device.id);
-                handled = physicalControllerHandler?.onGenericMotionEvent(it.event!!) == true
-                if (!handled) handled = PluviaApp.inputControlsView?.onGenericMotionEvent(it.event) == true
-                // Final fallback to WinHandler passthrough
-                if (!handled) handled = xServerView!!.getxServer().winHandler.onGenericMotionEvent(it.event)
+                val winHandler = xServerView!!.getxServer().winHandler
+                val assignedSlot = ControllerManager.getInstance().getSlotForDevice(it.event.device.id)
+                if (assignedSlot >= 0) {
+                    handled = winHandler.onGenericMotionEvent(it.event)
+                } else {
+                    winHandler.setCurrentController(it.event.device.id)
+                    handled = physicalControllerHandler?.onGenericMotionEvent(it.event!!) == true
+                    if (!handled) handled = PluviaApp.inputControlsView?.onGenericMotionEvent(it.event) == true
+                    // Final fallback to WinHandler passthrough
+                    if (!handled) handled = winHandler.onGenericMotionEvent(it.event)
+                }
             }
             if (PluviaApp.touchpadView?.hasPointerCapture() != true && !PluviaApp.isOverlayPaused) {
                 if ((it.event != null) && (it.event.device != null)) {
@@ -1558,6 +1641,9 @@ fun XServerScreen(
                     Lifecycle.Event.ON_RESUME -> {
                         Timber.d("Synchronizing XServerView renderer for lifecycle event: $event")
                         syncRendererToCurrentLifecycleState()
+                        if (event == Lifecycle.Event.ON_RESUME) {
+                            xServerView?.getxServer()?.winHandler?.reassertPrimaryController()
+                        }
                     }
                     else -> Unit
                 }
@@ -2103,7 +2189,7 @@ fun XServerScreen(
                                 appId,
                                 bootToContainer,
                                 testGraphics,
-                                diagnostics,
+                                PrefManager.wrapperDiagnostics,
                                 xServerState,
                                 envVars,
                                 container,
@@ -2205,6 +2291,117 @@ fun XServerScreen(
                             PluviaApp.inputControlsView?.triggerShowKeyboard()
                         },
                     )
+
+                    // Steam Controller (Puck over USB-C, no root) driver — starts if a Puck is connected.
+                    // Loads this container's per-game ScConfig (action sets / layers / mode-shift) if one exists,
+                    // else falls back to the hardcoded default profile inside TritonMapper.
+                    tritonMapper?.stop()
+                    val scConfig = app.gamenative.steamcontroller.ScConfigStore.forKey(
+                        context, appId,
+                    )
+                    // Step-6 menu HUD overlay (radial/touch ring/grid). Added above the game render; fail-safe so a
+                    // UI issue can't block the controller. Falls back to a no-op overlay if attach fails.
+                    val scMenuOverlay = runCatching {
+                        app.gamenative.steamcontroller.ScMenuOverlayView(context).also { ov ->
+                            // Resolve each menu's placement/size at draw time, per-menu (keyed by appId + menuId),
+                            // falling back to the whole-HUD per-game/global placement. reload() refreshes it live.
+                            ov.gameKey = appId
+                            gameHost.addView(
+                                ov,
+                                FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                ),
+                            )
+                        }
+                    }.getOrNull() ?: app.gamenative.steamcontroller.NoOpScMenuOverlay
+                    // Split-trackpad on-screen keyboard overlay (toggled by SHOW_KEYBOARD / the Steam button).
+                    val scKeyboardOverlay = runCatching {
+                        app.gamenative.steamcontroller.ScKeyboardOverlayView(context).also { kv ->
+                            kv.setLayout(app.gamenative.steamcontroller.ScOverlayStore.forKeyboard(context, appId))
+                            gameHost.addView(
+                                kv,
+                                FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                ),
+                            )
+                        }
+                    }.getOrNull() ?: app.gamenative.steamcontroller.NoOpScKeyboardOverlay
+                    // Bridge: lets the BLE controller open + navigate the QuickMenu / in-game editors. The Triton
+                    // isn't an Android input device, so we open the menu via the same back action physical pads use
+                    // and inject focus-nav keys (DPAD/CENTER) / a back-press into Compose on the main thread.
+                    val scMainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                    val scCursor = app.gamenative.ui.component.dialog.ScCursorController(context)
+                    val scUiBridge = object : app.gamenative.steamcontroller.ScUiBridge {
+                        override fun isMenuCapturing(): Boolean =
+                            showQuickMenu || keepPausedForEditor || showElementEditor || isEditMode
+                        override fun openQuickMenu() {
+                            scMainHandler.post { if (!showQuickMenu) gameBack() }
+                        }
+                        override fun moveCursor(dx: Int, dy: Int) {
+                            scMainHandler.post {
+                                // Only draw the nav cursor while a menu/editor is capturing; otherwise a stray move
+                                // (or a leftover dot) must not attach to the game view. Detach on any out-of-capture move.
+                                if (!isMenuCapturing()) { scCursor.detach(); return@post }
+                                scCursor.move(app.gamenative.ui.component.dialog.ScNavDialogStack.topView() ?: view, dx, dy)
+                            }
+                        }
+                        override fun cursorTap() {
+                            scMainHandler.post {
+                                if (!isMenuCapturing()) { scCursor.detach(); return@post }
+                                scCursor.tap(app.gamenative.ui.component.dialog.ScNavDialogStack.topView() ?: view)
+                            }
+                        }
+                        override fun hideCursor() { scMainHandler.post { scCursor.detach() } }
+                        override fun nav(key: app.gamenative.steamcontroller.ScNavKey) {
+                            scMainHandler.post {
+                                val act = context as? ComponentActivity ?: return@post
+                                val now = android.os.SystemClock.uptimeMillis()
+                                // SC settings dialogs each live in their OWN window (Compose Dialog/AlertDialog), so
+                                // nav events must go to the top open dialog's view, not the main Compose view. Falls
+                                // back to the main view (`view`) for the QuickMenu, which is in the main window.
+                                val target = app.gamenative.ui.component.dialog.ScNavDialogStack.topView() ?: view
+                                if (key == app.gamenative.steamcontroller.ScNavKey.BACK) {
+                                    // Close the top dialog via its own dismiss (a synthetic KEYCODE_BACK does NOT reach
+                                    // a Compose dialog's onDismissRequest); fall back to the activity back for the menu.
+                                    if (!app.gamenative.ui.component.dialog.ScNavDialogStack.back()) {
+                                        act.onBackPressedDispatcher.onBackPressed()
+                                    }
+                                    return@post
+                                }
+                                val code = when (key) {
+                                    app.gamenative.steamcontroller.ScNavKey.UP -> KeyEvent.KEYCODE_DPAD_UP
+                                    app.gamenative.steamcontroller.ScNavKey.DOWN -> KeyEvent.KEYCODE_DPAD_DOWN
+                                    app.gamenative.steamcontroller.ScNavKey.LEFT -> KeyEvent.KEYCODE_DPAD_LEFT
+                                    app.gamenative.steamcontroller.ScNavKey.RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
+                                    // Bumpers -> tab prev/next; the command picker listens for L1/R1 to flip tabs.
+                                    app.gamenative.steamcontroller.ScNavKey.TAB_PREV -> KeyEvent.KEYCODE_BUTTON_L1
+                                    app.gamenative.steamcontroller.ScNavKey.TAB_NEXT -> KeyEvent.KEYCODE_BUTTON_R1
+                                    app.gamenative.steamcontroller.ScNavKey.HELP -> KeyEvent.KEYCODE_BUTTON_Y // Y = Help
+                                    app.gamenative.steamcontroller.ScNavKey.CLOSE -> KeyEvent.KEYCODE_BUTTON_START // Start = close editor
+                                    // Triggers -> zoom in/out; the overlay placement editor listens for these to resize.
+                                    app.gamenative.steamcontroller.ScNavKey.ZOOM_IN -> KeyEvent.KEYCODE_ZOOM_IN
+                                    app.gamenative.steamcontroller.ScNavKey.ZOOM_OUT -> KeyEvent.KEYCODE_ZOOM_OUT
+                                    else -> KeyEvent.KEYCODE_DPAD_CENTER  // SELECT
+                                }
+                                // Compose's focus system does its own DPAD focus traversal + DPAD_CENTER activation,
+                                // independent of Android View focus (unlike Activity.dispatchKeyEvent, which routes to
+                                // the focused game SurfaceView and never reaches Compose).
+                                target.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
+                                target.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
+                            }
+                        }
+                    }
+                    tritonMapper = app.gamenative.steamcontroller.TritonMapper(
+                        context,
+                        xServerView.getxServer(),
+                        scConfig,
+                        scMenuOverlay,
+                        scKeyboardOverlay,
+                        configKey = appId,
+                        uiBridge = scUiBridge,
+                    ).also { it.start() }
 
                     // Store profile for auto-show logic
                     loadedProfile = targetProfile
@@ -2532,6 +2729,7 @@ fun XServerScreen(
             onFpsLimiterEnabledChanged = ::applyFpsLimiterEnabled,
             onFpsLimiterChanged = ::applyFpsLimiterTarget,
             hasPhysicalController = hasPhysicalController,
+            isSteamControllerLive = tritonMapper?.transportReady == true,
             isTouchscreenModeActive = isTouchscreenModeActive,
             onTouchGestureSettingsClick = { showTouchGestureDialog = true },
             isShooterModeActive = isShooterModeActive,
@@ -2557,12 +2755,30 @@ fun XServerScreen(
                     if (shouldForceResumeOnMenuClose) {
                         forceResumeIfSuspended()
                         shouldForceResumeOnMenuClose = false
+                    } else if (tritonMapper?.transportReady == true && !keepPausedForEditor && !isExiting.get()) {
+                        // A BLE Steam Controller can't press the manual-resume button (it isn't an Android input
+                        // device), so closing the menu with it would otherwise leave the game stuck paused. The
+                        // controller user closing the menu = ready to play, so resume regardless of manual policy.
+                        // Skip while exiting — EXIT_GAME already resumed + began teardown; a second onResume() here
+                        // (fired by the close animation) races the teardown and can freeze the app.
+                        forceResumeIfSuspended()
                     } else if (!keepPausedForEditor) {
                         resumeIfAllowedAfterOverlay()
                     }
                 }
             },
         )
+
+        if (showQuickMenu && PrefManager.showControllerDebugMenu) {
+            ControllerSlotStatusOverlay(
+                container = container,
+                areControlsVisible = areControlsVisible,
+                refreshKey = controllerSlotStatusVersion,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp),
+            )
+        }
 
         if (manualResumeMode && PluviaApp.isOverlayPaused && !showQuickMenu && !keepPausedForEditor) {
             Box(
@@ -2766,6 +2982,32 @@ fun XServerScreen(
         }
     }
 
+    // Steam Controller live editors (from the QuickMenu CONTROLLER tab). Each persists via ScConfigStore /
+    // ScTuningStore and calls tritonMapper.reload() so the change applies to the running game with no relaunch.
+    val scEditorDismiss: () -> Unit = {
+        keepPausedForEditor = false
+        runCatching { tritonMapper?.reload() }
+        // A BLE Steam Controller can't press the manual-resume button, so force-resume for SC sessions (otherwise
+        // closing an editor in manual-suspend policy would leave the game stuck paused).
+        if (tritonMapper?.transportReady == true) forceResumeIfSuspended() else resumeIfAllowedAfterOverlay()
+    }
+    // The SC live-editor dialogs (hub + sub-editors) are extracted into their own composable: XServerScreen is a huge
+    // function and was at the ART bytecode verifier's size limit (a VerifyError crashes launch when it grows), so
+    // editor UI must live outside this method.
+    ScLiveEditorDialogs(
+        appId = appId,
+        tritonMapper = tritonMapper,
+        showScRoot = showScRoot, onShowScRoot = { showScRoot = it },
+        showScBindings = showScBindings, onShowScBindings = { showScBindings = it },
+        showScLayout = showScLayout, onShowScLayout = { showScLayout = it },
+        showScKeyboard = showScKeyboard, onShowScKeyboard = { showScKeyboard = it },
+        showScConfigs = showScConfigs, onShowScConfigs = { showScConfigs = it },
+        scReturnToRoot = scReturnToRoot, onScReturnToRoot = { scReturnToRoot = it },
+        onFullDismiss = scEditorDismiss,
+        // Back from the SC hub returns to the QuickMenu (not the game): keep paused, show the QuickMenu again.
+        onRootBack = { keepPausedForEditor = false; showQuickMenu = true },
+    )
+
     // var ranSetup by rememberSaveable { mutableStateOf(false) }
     // LaunchedEffect(lifecycleOwner) {
     //     if (!ranSetup) {
@@ -2774,6 +3016,87 @@ fun XServerScreen(
     //
     //     }
     // }
+}
+
+/**
+ * The Steam Controller live-editor dialogs surfaced from the in-game QuickMenu: a single root hub that lists the
+ * editors (Bindings / Labels / Touchpad / Overlay) plus the sub-editor dialogs themselves. Extracted out of the
+ * giant [XServerScreen] composable because that method sits at the ART bytecode verifier's size limit — growing it
+ * (e.g. adding controller-nav focus handling here) trips a `VerifyError` that crashes on launch.
+ *
+ * Navigation model: opening a sub-editor from the hub sets [scReturnToRoot]; the sub-editor's dismiss then reopens
+ * the hub (back ONE level, staying paused + applying edits live) instead of resuming the game via [onFullDismiss].
+ * The hub itself requests initial focus so d-pad/stick nav has a starting control (otherwise the list looks
+ * un-navigable and must be touch-picked).
+ */
+@Composable
+private fun ScLiveEditorDialogs(
+    appId: String,
+    tritonMapper: app.gamenative.steamcontroller.TritonMapper?,
+    showScRoot: Boolean, onShowScRoot: (Boolean) -> Unit,
+    showScBindings: Boolean, onShowScBindings: (Boolean) -> Unit,
+    showScLayout: Boolean, onShowScLayout: (Boolean) -> Unit,
+    showScKeyboard: Boolean, onShowScKeyboard: (Boolean) -> Unit,
+    showScConfigs: Boolean, onShowScConfigs: (Boolean) -> Unit,
+    scReturnToRoot: Boolean, onScReturnToRoot: (Boolean) -> Unit,
+    onFullDismiss: () -> Unit,
+    /** Back from the ROOT hub → reopen the QuickMenu (not resume the game). */
+    onRootBack: () -> Unit,
+) {
+    // Close a sub-editor opened from the SC root hub: if we came from the hub, reopen it (back ONE level, stay
+    // paused, apply edits live); otherwise (opened directly) fall through to the full resume.
+    val scSubEditorDismiss: (close: () -> Unit) -> Unit = { close ->
+        close()
+        if (scReturnToRoot) {
+            onScReturnToRoot(false)
+            runCatching { tritonMapper?.reload() }
+            onShowScRoot(true)
+        } else {
+            onFullDismiss()
+        }
+    }
+    if (showScRoot) {
+        // The hub items (label + the action that opens that sub-editor). Each opens its editor with scReturnToRoot=true
+        // so B comes back here one level at a time. Rendered by [ScRootMenuDialog] so the hub shares the bindings
+        // editor's look (gradient selection ring, purple selected text, oval Back chip) and its controller nav.
+        val items: List<Pair<String, () -> Unit>> = listOf(
+            stringResource(R.string.sc_edit_configs) to { onShowScRoot(false); onScReturnToRoot(true); onShowScConfigs(true) },
+            stringResource(R.string.sc_edit_bindings) to { onShowScRoot(false); onScReturnToRoot(true); onShowScBindings(true) },
+            stringResource(R.string.sc_edit_layout) to { onShowScRoot(false); onScReturnToRoot(true); onShowScLayout(true) },
+            stringResource(R.string.sc_edit_keyboard) to { onShowScRoot(false); onScReturnToRoot(true); onShowScKeyboard(true) },
+        )
+        app.gamenative.ui.component.dialog.ScRootMenuDialog(
+            title = stringResource(R.string.sc_edit_root),
+            items = items,
+            onBack = { onShowScRoot(false); onRootBack() },
+        )
+    }
+    if (showScBindings) {
+        SteamControllerBindingEditorDialog(containerId = appId, onDismiss = { scSubEditorDismiss { onShowScBindings(false) } })
+    }
+    if (showScLayout) {
+        ScOverlayEditorDialog(
+            storeKey = appId,
+            isShared = false,
+            target = ScOverlayTarget.MENU,
+            onDismiss = { scSubEditorDismiss { onShowScLayout(false) } },
+        )
+    }
+    if (showScKeyboard) {
+        ScOverlayEditorDialog(
+            storeKey = appId,
+            isShared = false,
+            target = ScOverlayTarget.KEYBOARD,
+            onDismiss = { scSubEditorDismiss { onShowScKeyboard(false) } },
+        )
+    }
+    if (showScConfigs) {
+        ScConfigManagerDialog(
+            storeKey = appId,
+            onChanged = { runCatching { tritonMapper?.reload() } },
+            onDismiss = { scSubEditorDismiss { onShowScConfigs(false) } },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2959,7 +3282,7 @@ private fun hideInputControls() {
     PluviaApp.inputControlsView?.setShowTouchscreenControls(false)
     PluviaApp.inputControlsView?.setVisibility(View.GONE)
     PluviaApp.inputControlsView?.setProfile(null)
-    PluviaApp.xServerView?.getxServer()?.winHandler?.refreshControllerMappings()
+    PluviaApp.xServerView?.getxServer()?.winHandler?.refreshControllerMappingsForHotplug()
 
     PluviaApp.touchpadView?.setSensitivity(1.0f)
     PluviaApp.touchpadView?.setPointerButtonLeftEnabled(true)
@@ -2971,6 +3294,305 @@ private fun hideInputControls() {
         }
     }
     PluviaApp.inputControlsView?.invalidate()
+}
+
+@Composable
+private fun ControllerSlotStatusOverlay(
+    container: Container,
+    areControlsVisible: Boolean,
+    refreshKey: Int,
+    modifier: Modifier = Modifier,
+) {
+    var listenerRefreshKey by remember { mutableIntStateOf(0) }
+    val controllerManager = remember { ControllerManager.getInstance() }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    DisposableEffect(controllerManager) {
+        val listener = ControllerManager.OnSlotsChangedListener {
+            mainHandler.post {
+                listenerRefreshKey++
+            }
+        }
+        controllerManager.addOnSlotsChangedListener(listener)
+        onDispose {
+            controllerManager.removeOnSlotsChangedListener(listener)
+        }
+    }
+
+    val snapshot = remember(
+        controllerManager,
+        container.containerVariant,
+        container.inputType,
+        areControlsVisible,
+        refreshKey,
+        listenerRefreshKey,
+    ) {
+        buildControllerStatusSnapshot(
+            controllerManager = controllerManager,
+            container = container,
+            areControlsVisible = areControlsVisible,
+        )
+    }
+
+    Surface(
+        modifier = modifier
+            .widthIn(min = 320.dp, max = 440.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.78f),
+        contentColor = androidx.compose.ui.graphics.Color.White,
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.18f)),
+        shadowElevation = 8.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Gamepad,
+                    contentDescription = null,
+                    tint = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+                Text(
+                    text = "Controller slots",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = snapshot.guestApi,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                snapshot.slots.forEach { slot ->
+                    ControllerSlotRow(slot)
+                }
+            }
+
+            HorizontalDivider(color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.16f))
+
+            Text(
+                text = "Connected controllers",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.86f),
+            )
+            if (snapshot.connectedControllers.isEmpty()) {
+                Text(
+                    text = "None detected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.64f),
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    snapshot.connectedControllers.forEach { controller ->
+                        ConnectedControllerRow(controller)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ControllerSlotRow(slot: ControllerSlotUiState) {
+    val accent = when {
+        slot.status == "Connected" -> androidx.compose.ui.graphics.Color(0xFF8BD67D)
+        slot.enabled -> androidx.compose.ui.graphics.Color(0xFFFFC857)
+        else -> androidx.compose.ui.graphics.Color.White.copy(alpha = 0.44f)
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = "P${slot.slotIndex + 1}",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = accent,
+            modifier = Modifier.width(28.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = slot.status,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accent,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+                Text(
+                    text = slot.controllerName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = androidx.compose.ui.graphics.Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                text = "${slot.deviceId} | ${slot.androidInputSource}",
+                style = MaterialTheme.typography.labelSmall,
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = slot.guestInputMethod,
+                style = MaterialTheme.typography.labelSmall,
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectedControllerRow(controller: ConnectedControllerUiState) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = controller.slotLabel,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = androidx.compose.ui.graphics.Color.White,
+            modifier = Modifier.width(40.dp),
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = controller.name,
+                style = MaterialTheme.typography.bodySmall,
+                color = androidx.compose.ui.graphics.Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "${controller.deviceId} | ${controller.androidInputSource}",
+                style = MaterialTheme.typography.labelSmall,
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun buildControllerStatusSnapshot(
+    controllerManager: ControllerManager,
+    container: Container,
+    areControlsVisible: Boolean,
+): ControllerStatusSnapshot {
+    controllerManager.autoAssignConnectedDevices()
+    val guestApi = describePreferredInputApi(container)
+    val slots = (0 until WinHandler.MAX_PLAYERS).map { slot ->
+        val assignedDevice = controllerManager.getAssignedDeviceForSlot(slot)
+        val virtualGamepadActive =
+            slot == 0 &&
+                areControlsVisible &&
+                PluviaApp.inputControlsView?.profile?.isVirtualGamepad() == true
+        val enabled = controllerManager.isSlotEnabled(slot)
+        when {
+            assignedDevice != null -> ControllerSlotUiState(
+                slotIndex = slot,
+                enabled = enabled,
+                status = "Connected",
+                controllerName = assignedDevice.name,
+                deviceId = "deviceId=${assignedDevice.id}",
+                androidInputSource = describeControllerSources(assignedDevice),
+                guestInputMethod = "Physical controller -> $guestApi",
+            )
+            virtualGamepadActive -> ControllerSlotUiState(
+                slotIndex = slot,
+                enabled = enabled,
+                status = "Connected",
+                controllerName = PluviaApp.inputControlsView?.profile?.name ?: "On-screen controls",
+                deviceId = "virtual",
+                androidInputSource = "Touch controls",
+                guestInputMethod = "Virtual gamepad -> $guestApi",
+            )
+            enabled -> ControllerSlotUiState(
+                slotIndex = slot,
+                enabled = true,
+                status = "Waiting",
+                controllerName = "No controller assigned",
+                deviceId = "empty",
+                androidInputSource = "No active input",
+                guestInputMethod = "Provisioned for $guestApi",
+            )
+            else -> ControllerSlotUiState(
+                slotIndex = slot,
+                enabled = false,
+                status = "Disabled",
+                controllerName = "Slot disabled",
+                deviceId = "empty",
+                androidInputSource = "No active input",
+                guestInputMethod = "No guest input",
+            )
+        }
+    }
+    val connectedControllers = controllerManager.getDetectedDevices().map { device ->
+        val slot = controllerManager.getSlotForDevice(device.id)
+        ConnectedControllerUiState(
+            name = device.name,
+            deviceId = "deviceId=${device.id}",
+            slotLabel = if (slot >= 0) "P${slot + 1}" else "Free",
+            androidInputSource = describeControllerSources(device),
+        )
+    }
+    return ControllerStatusSnapshot(
+        slots = slots,
+        connectedControllers = connectedControllers,
+        guestApi = guestApi,
+    )
+}
+
+private fun describePreferredInputApi(container: Container): String {
+    val inputType = container.inputType
+    val api = PreferredInputApi.values().getOrElse(inputType) { PreferredInputApi.BOTH }
+    val apiLabel = when (api) {
+        PreferredInputApi.AUTO -> "Auto"
+        PreferredInputApi.DINPUT -> "DirectInput"
+        PreferredInputApi.XINPUT -> "XInput"
+        PreferredInputApi.BOTH -> "XInput + DirectInput"
+    }
+    val transport = if (container.containerVariant.equals(Container.BIONIC, ignoreCase = true)) {
+        "shared memory"
+    } else {
+        "WinHandler"
+    }
+    return "$apiLabel ($transport)"
+}
+
+private fun describeControllerSources(device: InputDevice): String {
+    val sources = mutableListOf<String>()
+    if (device.supportsSource(InputDevice.SOURCE_GAMEPAD)) sources += "Gamepad"
+    if (device.supportsSource(InputDevice.SOURCE_JOYSTICK)) sources += "Joystick"
+    if (device.supportsSource(InputDevice.SOURCE_KEYBOARD)) sources += "Keyboard"
+    if (device.supportsSource(InputDevice.SOURCE_DPAD)) sources += "D-pad"
+    return if (sources.isEmpty()) {
+        "sources=0x${device.sources.toString(16)}"
+    } else {
+        sources.joinToString(" + ")
+    }
 }
 
 /**
@@ -3552,6 +4174,7 @@ private fun setupXEnvironment(
                 displayNameMap = displayNameMap,
                 iconUrlMap = iconUrlMap,
                 configDirectory = configDirectory,
+                context = context,
             ).also { it.start() }
         } else {
             Timber.tag("achievements").w("Skipping achievement watcher, no steam_settings dir found for appId=$appId")
