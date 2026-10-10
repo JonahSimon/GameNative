@@ -19,18 +19,56 @@ import app.gamenative.data.ModProfile
 import app.gamenative.data.ModTargetRoot
 import app.gamenative.mods.BethesdaPluginManager
 import app.gamenative.mods.BethesdaPluginDependencyIssue
+import app.gamenative.mods.AutomaticPlacementPlanner
+import app.gamenative.mods.AutomaticPlacementResult
 import app.gamenative.mods.ModArchiveEntry
 import app.gamenative.mods.ModDownloadInfo
 import app.gamenative.mods.ModImportProgress
 import app.gamenative.mods.ModPlacementPreset
 import app.gamenative.mods.ModPlacementPresetDetector
 import app.gamenative.mods.ModPlacementSources
+import app.gamenative.mods.ModProfileOverlayTransition
 import app.gamenative.mods.ModTargetResolver
 import app.gamenative.mods.NexusCollectionFile
 import app.gamenative.mods.NexusModFile
+import app.gamenative.mods.NexusModInfo
 import app.gamenative.mods.ResolvedModTargetRoot
-import org.json.JSONObject
 import java.io.File
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
+
+internal sealed interface CallbackWaitResult<out T> {
+    data class Received<T>(val value: T) : CallbackWaitResult<T>
+    data object Cancelled : CallbackWaitResult<Nothing>
+}
+
+internal suspend fun <T> awaitCallbackOrCancellation(
+    callback: Deferred<T>,
+    cancellationRequests: Flow<Boolean>,
+    timeoutMillis: Long,
+): CallbackWaitResult<T>? = withTimeoutOrNull(timeoutMillis) {
+    coroutineScope {
+        val cancellation = async(start = CoroutineStart.UNDISPATCHED) {
+            cancellationRequests.first { it }
+        }
+        try {
+            select {
+                callback.onAwait { CallbackWaitResult.Received(it) }
+                cancellation.onAwait { CallbackWaitResult.Cancelled }
+            }
+        } finally {
+            cancellation.cancel()
+        }
+    }
+}
+
 internal fun ModInstall.canPlaceFiles(): Boolean =
     status == ModInstallStatus.READY.name ||
         status == ModInstallStatus.APPLIED.name ||
@@ -64,6 +102,28 @@ internal fun ModInstall.profileStatus(enabledInProfile: Boolean): String =
         canPlaceFiles() && status != ModInstallStatus.DISABLED.name && !enabledInProfile -> "PROFILE_DISABLED"
         else -> status
     }
+
+internal fun requiresManagedOverlayRebuild(
+    configuredInstallIds: Set<String>,
+    activeOwnershipInstallIds: Set<String>,
+    transition: ModProfileOverlayTransition,
+): Boolean =
+    configuredInstallIds.isNotEmpty() &&
+        configuredInstallIds.all(activeOwnershipInstallIds::contains) &&
+        transition.requiresRebuild &&
+        transition.safeToRebuild
+
+internal fun shouldApplyProfileInstall(
+    install: ModInstall,
+    hasActiveOwnership: Boolean,
+    hasConflict: Boolean,
+    needsAssetRepair: Boolean,
+    hasMissingTarget: Boolean,
+): Boolean =
+    install.status != ModInstallStatus.APPLIED.name ||
+        (hasConflict && !hasActiveOwnership) ||
+        needsAssetRepair ||
+        hasMissingTarget
 
 internal fun ModDownloadInfo.toImportProgress(): ModImportProgress =
     ModImportProgress(
@@ -149,6 +209,7 @@ internal fun ModPlacementRecipe.toDraft(): RecipeDraft =
         sourceSubpath = sourceSubpath,
         targetRoot = targetRoot,
         targetRelativePath = targetRelativePath,
+        targetFileName = targetFileName,
         mode = mode,
         stripPrefixSegments = stripPrefixSegments,
         includeSourceDirectory = includeSourceDirectory,
@@ -160,6 +221,7 @@ internal fun RecipeDraft.toRecipe(installId: String): ModPlacementRecipe =
         sourceSubpath = ModPlacementSources.encode(ModPlacementSources.decode(sourceSubpath)),
         targetRoot = targetRoot,
         targetRelativePath = normalizedTargetPath(),
+        targetFileName = targetFileName,
         mode = mode,
         stripPrefixSegments = stripPrefixSegments,
         includeSourceDirectory = includeSourceDirectory,
@@ -183,9 +245,40 @@ internal fun automaticDraftsFor(
     gameName: String,
     entries: List<ModArchiveEntry>,
     fallback: RecipeDraft,
+    selectedOptions: Map<String, String> = emptyMap(),
 ): List<RecipeDraft> {
-    val preset = placementPresetOptions(gameName, entries, fallback).firstOrNull()
-    if (preset != null) return preset.drafts
+    val result = AutomaticPlacementPlanner.plan(gameName, entries, selectedOptions)
+    return automaticDraftsFor(result, gameName, entries, fallback)
+}
+
+internal fun NexusCollectionFile.toEmbeddedNexusModInfo(): NexusModInfo? {
+    val resolvedModName = modName.ifBlank { return null }
+    return NexusModInfo(
+        modId = modId,
+        name = resolvedModName,
+        summary = "",
+        version = version,
+    )
+}
+
+internal fun automaticDraftsFor(
+    result: AutomaticPlacementResult,
+    gameName: String,
+    entries: List<ModArchiveEntry>,
+    fallback: RecipeDraft,
+): List<RecipeDraft> {
+    val recommendation = result.recommended
+    if (recommendation != null) {
+        return recommendation.drafts.map { draft ->
+            fallback.copy(
+                sourceSubpath = draft.sourceSubpath,
+                targetRoot = draft.targetRoot,
+                targetRelativePath = draft.targetRelativePath,
+                mode = draft.mode,
+                includeSourceDirectory = draft.includeSourceDirectory,
+            )
+        }
+    }
 
     val bethesdaGame = BethesdaPluginManager.detectGame(gameName)
     if (bethesdaGame != null) {
@@ -286,6 +379,23 @@ internal fun compatibleLastPlacementDrafts(
         }
         draft.copy(sourceSubpath = sourceSubpath)
     }
+}
+
+internal fun draftsWithUnresolvedSources(
+    current: List<RecipeDraft>,
+    unresolvedSources: List<String>,
+    fallback: RecipeDraft,
+): List<RecipeDraft> {
+    val existingSources = current.flatMap { ModPlacementSources.decode(it.sourceSubpath) }.toSet()
+    val unresolvedDrafts = unresolvedSources.distinct().filterNot { it in existingSources }.map { source ->
+        fallback.copy(
+            sourceSubpath = ModPlacementSources.encode(listOf(source)),
+            targetRoot = "",
+            targetRelativePath = "",
+            includeSourceDirectory = false,
+        )
+    }
+    return current + unresolvedDrafts
 }
 
 internal fun archiveContainsSource(entries: List<ModArchiveEntry>, source: String): Boolean {

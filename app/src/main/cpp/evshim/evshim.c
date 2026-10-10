@@ -46,7 +46,8 @@ static int g_debug_enabled = 0;
  *      32     2  low_freq_rumble
  *      34     2  high_freq_rumble
  *      36     4  rumble_seq       — futex word (rumble: Wine -> Java)
- *                                   total: 40 bytes
+ *      40     4  connected        — 0 absent, 1 present (Java -> Wine)
+ *                                   total: 44 bytes
  */
 
 #define SHM_DATA_SIZE  64
@@ -64,12 +65,22 @@ struct gamepad_io {
     atomic_uint       seq;
     struct gamepad_state state;
     atomic_uint       rumble_seq;
+    atomic_uint       connected;
 };
 
 _Static_assert(sizeof(struct gamepad_io) <= SHM_DATA_SIZE, "gamepad_io exceeds SHM_DATA_SIZE");
 
 static struct gamepad_io *shm [MAX_GAMEPADS];
 static int vjoy_ids[MAX_GAMEPADS];
+static _Atomic(SDL_Joystick *) vjoy_handles[MAX_GAMEPADS];
+static SDL_JoystickID vjoy_instances[MAX_GAMEPADS];
+static _Atomic uint32_t last_rumble[MAX_GAMEPADS];
+// Set while the keepalive re-arms SDL; OnRumble then fails so a stale re-arm changes neither shm nor SDL state.
+static __thread int t_keepalive_active = 0;
+static pthread_once_t rumble_ka_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t rumble_ka_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t rumble_ka_cond;
+static pthread_mutex_t vjoy_close_mutex = PTHREAD_MUTEX_INITIALIZER;
 static size_t g_shm_map_size = 0;
 static int g_is_wine = 0;
 
@@ -173,10 +184,16 @@ static int          (*p_SDL_Init)                   (uint32_t);
 static const char  *(*p_SDL_GetError)               (void);
 static SDL_Joystick*(*p_SDL_JoystickOpen)           (int);
 static int          (*p_SDL_JoystickAttachVirtualEx) (const SDL_VirtualJoystickDesc *);
+static int          (*p_SDL_JoystickDetachVirtual)  (int);
+static void         (*p_SDL_JoystickClose)          (SDL_Joystick *);
 static int          (*p_SDL_JoystickSetVirtualAxis)  (SDL_Joystick *, int, int16_t);
 static int          (*p_SDL_JoystickSetVirtualButton)(SDL_Joystick *, int, uint8_t);
 static int          (*p_SDL_JoystickSetVirtualHat)   (SDL_Joystick *, int, uint8_t);
 static void         (*p_SDL_GetVersion)              (SDL_version *);
+static int          (*p_SDL_JoystickRumble)          (SDL_Joystick *, uint16_t, uint16_t, uint32_t);
+static SDL_JoystickID (*p_SDL_JoystickInstanceID)    (SDL_Joystick *);
+static int          (*p_SDL_NumJoysticks)            (void);
+static SDL_JoystickID (*p_SDL_JoystickGetDeviceInstanceID)(int);
 
 #define GETFUNCPTR(name) \
     do { \
@@ -184,13 +201,63 @@ static void         (*p_SDL_GetVersion)              (SDL_version *);
             LOGE("evshim: failed to load SDL symbol: %s\n", #name); \
     } while (0)
 
+static void *rumble_keepalive(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        pthread_mutex_lock(&vjoy_close_mutex);
+        for (int i = 0; i < MAX_GAMEPADS; i++) {
+            SDL_Joystick *js = atomic_load_explicit(&vjoy_handles[i], memory_order_acquire);
+            uint32_t r = atomic_load_explicit(&last_rumble[i], memory_order_acquire);
+            if (!js || !r) continue;
+            t_keepalive_active = 1;
+            p_SDL_JoystickRumble(js, (uint16_t)r, (uint16_t)(r >> 16), 2000);
+            t_keepalive_active = 0;
+        }
+        pthread_mutex_unlock(&vjoy_close_mutex);
+
+        pthread_mutex_lock(&rumble_ka_mutex);
+        int any = 0;
+        for (int i = 0; i < MAX_GAMEPADS; i++) {
+            if (atomic_load_explicit(&last_rumble[i], memory_order_acquire)) { any = 1; break; }
+        }
+        if (any) {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            ts.tv_nsec += 500000000L;
+            ts.tv_sec  += ts.tv_nsec / 1000000000L;
+            ts.tv_nsec %= 1000000000L;
+            pthread_cond_timedwait(&rumble_ka_cond, &rumble_ka_mutex, &ts);
+        } else {
+            pthread_cond_wait(&rumble_ka_cond, &rumble_ka_mutex);
+        }
+        pthread_mutex_unlock(&rumble_ka_mutex);
+    }
+    return NULL;
+}
+
+static void rumble_keepalive_init(void)
+{
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    pthread_cond_init(&rumble_ka_cond, &attr);
+    pthread_condattr_destroy(&attr);
+
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, rumble_keepalive, NULL) == 0)
+        pthread_detach(tid);
+}
+
 static int OnRumble(void *userdata, uint16_t low, uint16_t high)
 {
     int idx = (int)(intptr_t)userdata;
     if (idx < 0 || idx >= MAX_GAMEPADS || !shm[idx]) return -1;
+    if (t_keepalive_active) return -1;
 
     shm[idx]->state.low_freq_rumble  = low;
     shm[idx]->state.high_freq_rumble = high;
+    uint32_t prev = atomic_exchange_explicit(&last_rumble[idx], ((uint32_t)high << 16) | low, memory_order_acq_rel);
 
     // Wake up the Java thread waiting for rumble updates
     atomic_thread_fence(memory_order_seq_cst);
@@ -198,6 +265,13 @@ static int OnRumble(void *userdata, uint16_t low, uint16_t high)
     syscall(SYS_futex, &shm[idx]->rumble_seq, FUTEX_WAKE, 1, NULL, NULL, 0);
 
     LOGD("evshim: rumble P%d low=%u high=%u\n", idx, low, high);
+
+    if (!prev && (low || high) && p_SDL_JoystickRumble) {
+        pthread_once(&rumble_ka_once, rumble_keepalive_init);
+        pthread_mutex_lock(&rumble_ka_mutex);
+        pthread_cond_signal(&rumble_ka_cond);
+        pthread_mutex_unlock(&rumble_ka_mutex);
+    }
     return 0;
 }
 
@@ -224,20 +298,106 @@ static bool try_read_state(struct gamepad_io *s, uint32_t *last_seq, struct game
     return true;
 }
 
+static int attach_vjoy(int idx)
+{
+    SDL_VirtualJoystickDesc d = {0};
+    d.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
+    d.type    = SDL_JOYSTICK_TYPE_GAMECONTROLLER;
+    d.naxes   = 6; d.nbuttons = 15; d.nhats = 1;
+    d.Rumble  = &OnRumble;  d.userdata = (void*)(intptr_t)idx;
+    d.vendor_id = 0x045E;  // Microsoft
+    d.product_id = 0x028E; // Xbox 360 Controller
+    d.button_mask = 0xFFFF;
+    d.axis_mask = 0x3F;
+    d.name = "Xbox 360 Controller";
+
+    vjoy_ids[idx] = p_SDL_JoystickAttachVirtualEx(&d);
+    if (vjoy_ids[idx] < 0) {
+        LOGE("evshim: P%d SDL attach failed: %s\n", idx, p_SDL_GetError());
+        return -1;
+    }
+
+    vjoy_handles[idx] = p_SDL_JoystickOpen(vjoy_ids[idx]);
+    if (!vjoy_handles[idx]) {
+        LOGE("evshim: P%d SDL_JoystickOpen failed\n", idx);
+        p_SDL_JoystickDetachVirtual(vjoy_ids[idx]);
+        vjoy_ids[idx] = -1;
+        return -1;
+    }
+
+    vjoy_instances[idx] = p_SDL_JoystickInstanceID(vjoy_handles[idx]);
+    LOGI("evshim: P%d virtual joystick id=%d inst=%d connected\n", idx, vjoy_ids[idx], vjoy_instances[idx]);
+    return 0;
+}
+
+static void detach_vjoy(int idx)
+{
+    atomic_store_explicit(&last_rumble[idx], 0, memory_order_release);
+    pthread_mutex_lock(&vjoy_close_mutex);
+    SDL_Joystick *js = atomic_exchange_explicit(&vjoy_handles[idx], NULL, memory_order_acq_rel);
+    if (js) {
+        p_SDL_JoystickClose(js);
+    }
+    pthread_mutex_unlock(&vjoy_close_mutex);
+    if (vjoy_instances[idx] >= 0) {
+        // Device indexes shift when other joysticks are removed, so the index we
+        // stored at attach time may now point at a different pad. Re-resolve the
+        // current device index from the stable instance id before detaching.
+        int dev = -1;
+        int n = p_SDL_NumJoysticks();
+        for (int i = 0; i < n; i++) {
+            if (p_SDL_JoystickGetDeviceInstanceID(i) == vjoy_instances[idx]) {
+                dev = i;
+                break;
+            }
+        }
+        if (dev < 0) {
+            LOGI("evshim: P%d virtual joystick inst=%d already absent\n", idx, vjoy_instances[idx]);
+        } else if (p_SDL_JoystickDetachVirtual(dev) == 0) {
+            LOGI("evshim: P%d virtual joystick inst=%d disconnected\n", idx, vjoy_instances[idx]);
+        } else {
+            LOGE("evshim: P%d SDL_JoystickDetachVirtual(dev=%d) failed\n", idx, dev);
+        }
+        vjoy_instances[idx] = -1;
+        vjoy_ids[idx] = -1;
+    }
+}
+
+static void set_vjoy_connected(int idx, int connected)
+{
+    if (connected) {
+        if (!vjoy_handles[idx]) {
+            attach_vjoy(idx);
+        }
+    } else {
+        detach_vjoy(idx);
+    }
+}
+
+static void apply_vjoy_state(SDL_Joystick *js, const struct gamepad_state *state)
+{
+    p_SDL_JoystickSetVirtualAxis(js, 0, state->lx);
+    p_SDL_JoystickSetVirtualAxis(js, 1, state->ly);
+    p_SDL_JoystickSetVirtualAxis(js, 2, state->rx);
+    p_SDL_JoystickSetVirtualAxis(js, 3, state->ry);
+    p_SDL_JoystickSetVirtualAxis(js, 4, state->lt);
+    p_SDL_JoystickSetVirtualAxis(js, 5, state->rt);
+    for (int i = 0; i < 15; i++) {
+        p_SDL_JoystickSetVirtualButton(js, i, state->btn[i]);
+    }
+    p_SDL_JoystickSetVirtualHat(js, 0, state->hat);
+}
+
 static void *vjoy_updater(void *arg)
 {
     int idx = (int)(intptr_t)arg;
     struct gamepad_io *s = shm[idx];
 
-    SDL_Joystick *js = p_SDL_JoystickOpen(vjoy_ids[idx]);
-    if (!js) {
-        LOGE("evshim: P%d SDL_JoystickOpen failed\n", idx);
-        return NULL;
-    }
-
     LOGI("evshim: vjoy_updater P%d running (PID %d)\n", idx, getpid());
 
     uint32_t last_seq = atomic_load_explicit(&s->seq, memory_order_acquire);
+    int last_connected = atomic_load_explicit(&s->connected, memory_order_acquire) != 0;
+    set_vjoy_connected(idx, last_connected);
 
     struct timespec ts;
     struct timespec *tsp = NULL;
@@ -255,16 +415,17 @@ static void *vjoy_updater(void *arg)
         struct gamepad_io snap;
 
         if (try_read_state(s, &last_seq, &snap)) {
-            p_SDL_JoystickSetVirtualAxis(js, 0, snap.state.lx);
-            p_SDL_JoystickSetVirtualAxis(js, 1, snap.state.ly);
-            p_SDL_JoystickSetVirtualAxis(js, 2, snap.state.rx);
-            p_SDL_JoystickSetVirtualAxis(js, 3, snap.state.ry);
-            p_SDL_JoystickSetVirtualAxis(js, 4, snap.state.lt);
-            p_SDL_JoystickSetVirtualAxis(js, 5, snap.state.rt);
-            for (int i = 0; i < 15; i++) {
-                p_SDL_JoystickSetVirtualButton(js, i, snap.state.btn[i]);
+            int connected = atomic_load_explicit(&s->connected, memory_order_acquire) != 0;
+            if (connected != last_connected) {
+                set_vjoy_connected(idx, connected);
+                last_connected = connected;
             }
-            p_SDL_JoystickSetVirtualHat(js, 0, snap.state.hat);
+            SDL_Joystick *js = vjoy_handles[idx];
+            if (!connected || !js) {
+                continue;
+            }
+
+            apply_vjoy_state(js, &snap.state);
             continue;
         }
 
@@ -281,13 +442,19 @@ static void initialize_wine(int players)
 
     GETFUNCPTR(SDL_Init);  GETFUNCPTR(SDL_GetError);
     GETFUNCPTR(SDL_JoystickOpen);  GETFUNCPTR(SDL_JoystickAttachVirtualEx);
+    GETFUNCPTR(SDL_JoystickDetachVirtual);  GETFUNCPTR(SDL_JoystickClose);
     GETFUNCPTR(SDL_JoystickSetVirtualAxis);  GETFUNCPTR(SDL_JoystickSetVirtualButton);
     GETFUNCPTR(SDL_JoystickSetVirtualHat);
     GETFUNCPTR(SDL_GetVersion);
+    GETFUNCPTR(SDL_JoystickRumble);
+    GETFUNCPTR(SDL_JoystickInstanceID);  GETFUNCPTR(SDL_NumJoysticks);
+    GETFUNCPTR(SDL_JoystickGetDeviceInstanceID);
     if (!p_SDL_Init || !p_SDL_GetError || !p_SDL_JoystickOpen ||
-                !p_SDL_JoystickAttachVirtualEx || !p_SDL_JoystickSetVirtualAxis ||
+                !p_SDL_JoystickAttachVirtualEx || !p_SDL_JoystickDetachVirtual ||
+                !p_SDL_JoystickClose || !p_SDL_JoystickSetVirtualAxis ||
                 !p_SDL_JoystickSetVirtualButton || !p_SDL_JoystickSetVirtualHat ||
-                !p_SDL_GetVersion) {
+                !p_SDL_GetVersion || !p_SDL_JoystickInstanceID ||
+                !p_SDL_NumJoysticks || !p_SDL_JoystickGetDeviceInstanceID) {
         LOGE("evshim: SDL symbol resolution incomplete; aborting init\n");
         dlclose(sdl_handle);
         sdl_handle = NULL;
@@ -302,31 +469,6 @@ static void initialize_wine(int players)
 
     for (int i = 0; i < players; i++) {
         if (!shm[i]) continue;
-
-        SDL_VirtualJoystickDesc d = {0};
-        d.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
-        d.type    = SDL_JOYSTICK_TYPE_GAMECONTROLLER;
-        d.naxes   = 6; d.nbuttons = 15; d.nhats = 1;
-        d.Rumble  = &OnRumble;  d.userdata = (void*)(intptr_t)i;
-        d.vendor_id = 0x045E;  // Microsoft
-        d.product_id = 0x028E; // Xbox 360 Controller
-        d.button_mask = 0xFFFF;
-        d.axis_mask = 0x3F;
-
-        char name[64];
-        snprintf(name, sizeof name, "Xbox 360 Controller");
-        d.name = strdup(name);
-
-        vjoy_ids[i] = p_SDL_JoystickAttachVirtualEx(&d);
-        if (vjoy_ids[i] < 0) {
-            LOGE("evshim: P%d SDL attach failed: %s\n", i, p_SDL_GetError());
-            munmap(shm[i], g_shm_map_size);
-            shm[i] = NULL;
-            continue;
-        }
-
-        LOGD("evshim: P%d virtual joystick id=%d ready\n", i, vjoy_ids[i]);
-
         pthread_t tid;
         pthread_create(&tid, NULL, vjoy_updater, (void *)(intptr_t)i);
         pthread_detach(tid);
@@ -341,10 +483,14 @@ static void initialize_all_pads(void)
     const char *dbg = getenv("EVSHIM_DEBUG");
     g_debug_enabled = dbg && strchr("1yY", *dbg);
 
-    int players = 1;
+    int players = g_is_wine ? 1 : MAX_GAMEPADS;
     const char *ep = getenv("EVSHIM_MAX_PLAYERS");
     if (ep) players = atoi(ep);
     if (players > MAX_GAMEPADS) players = MAX_GAMEPADS;
+    for (int i = 0; i < MAX_GAMEPADS; i++) {
+        vjoy_ids[i] = -1;
+        vjoy_instances[i] = -1;
+    }
 
     setup_shm(players);
 
@@ -359,7 +505,10 @@ static void initialize_all_pads(void)
 JNIEXPORT void JNICALL
 Java_com_winlator_winhandler_WinHandler_notifyStateChanged(JNIEnv *env, jclass cls, jint idx)
 {
-    if (idx < 0 || idx >= MAX_GAMEPADS || !shm[idx]) return;
+    if (idx < 0 || idx >= MAX_GAMEPADS || !shm[idx]) {
+        ALOGE("evshim: notifyStateChanged missing shm for slot=%d", idx);
+        return;
+    }
 
     atomic_thread_fence(memory_order_seq_cst); // not sure if necessary
     atomic_fetch_add_explicit(&shm[idx]->seq, 1u, memory_order_release);

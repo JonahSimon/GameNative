@@ -7,12 +7,12 @@ import app.gamenative.BuildConfig
 import app.gamenative.PrefManager
 import com.winlator.container.Container
 import com.winlator.container.ContainerData
-import com.winlator.contents.AdrenotoolsManager
+import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-import java.io.File
 import org.junit.Assert.*
 import org.junit.Assume.assumeFalse
 import org.junit.Before
@@ -106,7 +106,7 @@ class BestConfigServiceTest {
 
     @Test
     fun testExactGpuMatch_parsesAllFields() {
-        val bestConfig = parseBestConfig(cs2MaliExactMatchResponse)
+        val bestConfig = JsonObject(parseBestConfig(cs2MaliExactMatchResponse).toMutableMap().apply { put("loadMods", JsonPrimitive(true)) })
         val matchType = getMatchType(cs2MaliExactMatchResponse)
 
         assertEquals("exact_gpu_match", matchType)
@@ -130,6 +130,7 @@ class BestConfigServiceTest {
         assertEquals("Box64", result["emulator"])
         assertEquals(1, (result["startupSelection"] as? Byte)?.toInt() ?: (result["startupSelection"] as? Int))
         assertEquals("2507", result["fexcoreVersion"])
+        assertEquals(true, result["loadMods"])
     }
 
     @Test
@@ -158,11 +159,12 @@ class BestConfigServiceTest {
         assertEquals("FEXCore", result["emulator"])
         assertEquals("COMPATIBILITY", result["box64Preset"])
         assertEquals("2507", result["fexcoreVersion"])
+        assertFalse("loadMods should not be added when absent", result.containsKey("loadMods"))
     }
 
     @Test
     fun testFallbackMatch_filtersExcludedFields() {
-        val bestConfig = parseBestConfig(cs2Adreno735Response)
+        val bestConfig = JsonObject(parseBestConfig(cs2Adreno735Response).toMutableMap().apply { put("loadMods", JsonPrimitive(true)) })
         val matchType = getMatchType(cs2Adreno735Response)
 
         assertEquals("fallback_match", matchType)
@@ -180,6 +182,7 @@ class BestConfigServiceTest {
         assertFalse("graphicsDriver should NOT be in map for fallback_match", result.containsKey("graphicsDriver"))
         assertFalse("dxwrapper should NOT be in map for fallback_match", result.containsKey("dxwrapper"))
         assertFalse("dxwrapperConfig should NOT be in map for fallback_match", result.containsKey("dxwrapperConfig"))
+        assertFalse("loadMods should NOT be in map for fallback_match", result.containsKey("loadMods"))
     }
 
     @Test
@@ -293,16 +296,17 @@ class BestConfigServiceTest {
                 "wineVersion": "invalid-wine-version",
                 "dxwrapper": "dxvk",
                 "dxwrapperConfig": "version=999.999.999",
-                "containerVariant": "glibc",
+                "containerVariant": "bionic",
                 "graphicsDriver": "turnip",
                 "graphicsDriverConfig": "version=999.999.999"
             }
         """.trimIndent()
 
         val bestConfig = Json.parseToJsonElement(invalidConfigJson).jsonObject
-        val result = runBlocking { BestConfigService.parseConfigToContainerData(context, bestConfig, "exact_gpu_match", true) }
+        val parsed = runBlocking { BestConfigService.parseConfigResult(context, bestConfig, "exact_gpu_match", true) }
 
-        assertTrue("Result should not be null", result!!.isEmpty())
+        assertTrue("Invalid config should not produce updates", parsed.config.isEmpty())
+        assertTrue("Missing components should be returned with this parse", parsed.missingComponents.isNotEmpty())
     }
 
     @Test
@@ -328,6 +332,35 @@ class BestConfigServiceTest {
         assertNotNull("Result should not be null", result)
         assertTrue("Result should not be empty", result!!.isNotEmpty())
         assertEquals("0.3.6", result["box64Version"])
+    }
+
+    @Test
+    fun testKnownConfigAppliesSteamClientButNotSteamType() {
+        val configJson = """
+            {
+                "dxwrapper": "dxvk",
+                "dxwrapperConfig": "version=1.10.3",
+                "containerVariant": "bionic",
+                "box64Version": "0.3.6",
+                "wineVersion": "proton-9.0-x86_64",
+                "launchRealSteam": true,
+                "steamType": "normal"
+            }
+        """.trimIndent()
+
+        val bestConfig = Json.parseToJsonElement(configJson).jsonObject
+        val parsed = runBlocking { BestConfigService.parseConfigResult(context, bestConfig, "exact_gpu_match", true) }
+
+        assertEquals(true, parsed.config["launchRealSteam"])
+        assertFalse(parsed.config.containsKey("steamType"))
+
+        val updated = ContainerUtils.applyBestConfigMapToContainerData(
+            containerData = ContainerData(launchRealSteam = false, steamType = Container.STEAM_TYPE_HEADLESS),
+            bestConfigMap = parsed.config,
+        )
+
+        assertTrue(updated.launchRealSteam)
+        assertEquals(Container.STEAM_TYPE_HEADLESS, updated.steamType)
     }
 
     @Test
@@ -1047,6 +1080,29 @@ class BestConfigServiceTest {
         assertEquals(entry, ManifestComponentHelper.findManifestEntryForVersion("Turnip_v26.2.0_R4", listOf(entry)))
         assertEquals(entry, ManifestComponentHelper.findManifestEntryForVersion("Turnip v26.2.0 R4", listOf(entry)))
         assertNull(ManifestComponentHelper.findManifestEntryForVersion("nope", listOf(entry)))
+    }
+
+    @Test
+    fun fallbackFilter_keepsRuntimeVariantButRemovesGpuSpecificSettings() {
+        val config = Json.parseToJsonElement(
+            """{
+                "containerVariant":"bionic",
+                "wineVersion":"wine",
+                "graphicsDriver":"turnip",
+                "graphicsDriverConfig":"version=test",
+                "dxwrapper":"dxvk",
+                "dxwrapperConfig":"version=test"
+            }""",
+        ).jsonObject
+
+        val filtered = BestConfigService.filterConfigByMatchType(config, "fallback_match")
+
+        assertEquals("bionic", filtered["containerVariant"]?.toString()?.trim('"'))
+        assertEquals("wine", filtered["wineVersion"]?.toString()?.trim('"'))
+        assertFalse(filtered.containsKey("graphicsDriver"))
+        assertFalse(filtered.containsKey("graphicsDriverConfig"))
+        assertFalse(filtered.containsKey("dxwrapper"))
+        assertFalse(filtered.containsKey("dxwrapperConfig"))
     }
 
     /**

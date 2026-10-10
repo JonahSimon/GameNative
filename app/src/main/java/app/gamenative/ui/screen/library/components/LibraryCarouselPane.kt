@@ -9,13 +9,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,42 +40,35 @@ import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import app.gamenative.PrefManager
 import app.gamenative.R
 import app.gamenative.data.LibraryItem
 import app.gamenative.ui.data.LibraryState
 import app.gamenative.ui.data.statsFor
+import app.gamenative.ui.data.communityCompatibilityFor
 import app.gamenative.ui.enums.PaneType
 import app.gamenative.ui.util.AdaptivePadding
 import app.gamenative.ui.util.shouldShowGamepadUI
-import com.skydoves.landscapist.ImageOptions
-import com.skydoves.landscapist.coil.CoilImage
 import kotlin.math.abs
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 private const val CAROUSEL_TILT_ANGLE = 30.061367f
 private const val CAROUSEL_SPACING_RATIO = -0.11f
@@ -85,9 +77,6 @@ private const val CAROUSEL_SIDE_OFFSET_RATIO = 0.028464798f
 private const val CAROUSEL_STEP_OFFSET_RATIO = 0.08f
 private const val CAROUSEL_ITEM_OVERSCAN_RATIO = 0.4f
 private const val CAROUSEL_CARD_ASPECT_RATIO = 2f / 3f
-private const val CAROUSEL_CARD_SIZE_MULTIPLIER = 1.22f
-private const val CAROUSEL_CARD_VERTICAL_OVERFLOW = 32f
-private const val CAROUSEL_BADGE_RESERVED_HEIGHT = 0f
 private const val CAROUSEL_MOUSE_WHEEL_SCROLL_MULTIPLIER = 72f
 private const val CAROUSEL_MOUSE_DRAG_SLOP_PX = 8f
 
@@ -181,6 +170,17 @@ private fun interpolateByDistance(
 }
 
 /**
+ * The layout-derived inputs a card's tilt transform depends on. Held behind a [derivedStateOf] so that
+ * a measure pass which doesn't actually move this card (e.g. the centered card's marquee re-measuring
+ * its text every frame) produces an equal value and does not invalidate the card's graphicsLayer.
+ */
+private data class CarouselTiltInput(
+    val distanceFromCenterPx: Float,
+    val viewportSpanPx: Float,
+    val isFirstItemAtStart: Boolean,
+)
+
+/**
  * Wraps a carousel card and applies its draw-order [zIndex] (centered card on top). This is the only
  * place that reacts to the live [centeredIndex]; keeping it in a thin wrapper means a center change
  * recomposes just this box, while [content] — which captures only stable values — is skipped. Do not
@@ -241,27 +241,24 @@ internal fun LibraryCarouselPane(
     val configuration = LocalConfiguration.current
     val horizontalPadding = AdaptivePadding.horizontal()
     val showGamepadHints = shouldShowGamepadUI()
-    val topOverlayClearance = if (state.isSearching) 116.dp else 104.dp
-    val bottomOverlayClearance = if (showGamepadHints) 156.dp else 32.dp
-    val baseCardWidth = when (configuration.screenWidthDp) {
-        in 0..700 -> 200.dp
-        in 701..1100 -> 240.dp
-        else -> 270.dp
-    }
-    val baseCardHeight = baseCardWidth / CAROUSEL_CARD_ASPECT_RATIO
-    val cardVerticalOverflow = CAROUSEL_CARD_VERTICAL_OVERFLOW.dp
-    val badgeReservedHeight = CAROUSEL_BADGE_RESERVED_HEIGHT.dp
-    val cardTopOverflow = cardVerticalOverflow
-    val cardBottomOverflow = cardVerticalOverflow + badgeReservedHeight
-    val availableCarouselHeight =
-        (configuration.screenHeightDp.dp - topOverlayClearance - bottomOverlayClearance)
-            .coerceAtLeast(220.dp)
-    val maxCardHeight =
-        (availableCarouselHeight - cardTopOverflow - cardBottomOverflow)
-            .coerceAtLeast(180.dp)
-    val cardHeight = minOf(baseCardHeight, maxCardHeight * CAROUSEL_CARD_SIZE_MULTIPLIER)
+    val hideStatusBar = PrefManager.hideStatusBarWhenNotInGame
+
+    // Fine-Tuned Values by JT, working on both landscape and portrait screens
+    val hintBarHeight = if (showGamepadHints) 56.dp else 0.dp
+    val extraTopPadding = if (showGamepadHints) 0.dp else 8.dp
+    val extraBottomPadding = if (hideStatusBar) 0.dp else 24.dp
+    val carouselTopMargin = (if (state.isSearching) 64.dp else 56.dp) + extraTopPadding
+    val carouselBottomMargin = 8.dp + hintBarHeight + extraBottomPadding
+    val cardTopPadding = 16.dp
+    val cardBottomPadding = 16.dp
+
+    // Correct calculation, no more messy calculations
+    val landscapeScale = if (configuration.screenWidthDp > configuration.screenHeightDp) 1.0f else 0.5f
+    val availableCarouselHeight = (configuration.screenHeightDp.dp - carouselTopMargin - carouselBottomMargin) * landscapeScale
+    val cardHeight = (availableCarouselHeight - cardTopPadding - cardBottomPadding)
     val cardWidth = cardHeight * CAROUSEL_CARD_ASPECT_RATIO
-    val itemContainerHeight = cardHeight + cardTopOverflow + cardBottomOverflow
+    val itemContainerHeight = cardHeight + cardTopPadding + cardBottomPadding
+
     val cardWidthPx = with(density) { cardWidth.toPx() }
     // Keep lazy items composed slightly beyond the viewport because rotation/translation can leave
     // transformed pixels visible after the raw item slot has technically moved offscreen.
@@ -335,16 +332,20 @@ internal fun LibraryCarouselPane(
     val currentAppInfoList by rememberUpdatedState(state.appInfoList)
     LaunchedEffect(listState) {
         var pendingUpdate: Job? = null
+        var lastSettledIndex = -1
         snapshotFlow { listState.isScrollInProgress to centeredIndex }
-            .collect { (isScrolling, _) ->
+            .collect { (isScrolling, currentCentered) ->
                 pendingUpdate?.cancel()
                 if (!isScrolling) {
                     pendingUpdate = launch {
                         delay(200)
                         val list = currentAppInfoList
-                        val idx = centeredIndex.takeIf { it in list.indices }
+                        val idx = currentCentered.takeIf { it in list.indices }
                             ?: listState.firstVisibleItemIndex.coerceIn(0, list.lastIndex.coerceAtLeast(0))
-                        settledBackdropItem = list.getOrNull(idx)
+                        if (idx != lastSettledIndex) {
+                            lastSettledIndex = idx
+                            settledBackdropItem = list.getOrNull(idx)
+                        }
                     }
                 }
             }
@@ -402,15 +403,35 @@ internal fun LibraryCarouselPane(
                         contentPadding = PaddingValues(
                             start = centeredSlotHorizontalPadding,
                             end = centeredSlotHorizontalPadding,
-                            top = topOverlayClearance,
-                            bottom = bottomOverlayClearance,
+                            top = carouselTopMargin,
+                            bottom = carouselBottomMargin,
                         ),
                     ) {
                         items(
                             count = state.appInfoList.size,
-                            key = { listIndex -> state.appInfoList[listIndex].appId },
+                            key = { listIndex ->
+                                val item = state.appInfoList[listIndex]
+                                if (item.recSource == "hero") "HERO_SLOT" else item.appId
+                            },
                         ) { listIndex ->
                             val item = state.appInfoList[listIndex]
+
+                            val tiltInputState = remember(listIndex) {
+                                derivedStateOf {
+                                    val layoutInfo = listState.layoutInfo
+                                    val vc = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2f
+                                    val span = (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset)
+                                        .toFloat().coerceAtLeast(1f)
+                                    val vi = layoutInfo.visibleItemsInfo.firstOrNull { it.index == listIndex }
+                                    val ic = if (vi != null) vi.offset + vi.size / 2f else vc
+                                    CarouselTiltInput(
+                                        distanceFromCenterPx = ic - vc,
+                                        viewportSpanPx = span,
+                                        isFirstItemAtStart = listIndex == 0 &&
+                                            layoutInfo.visibleItemsInfo.firstOrNull()?.index == 0,
+                                    )
+                                }
+                            }
 
                             val appItemModifier = Modifier
                                 .fillMaxSize()
@@ -435,18 +456,13 @@ internal fun LibraryCarouselPane(
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.TopCenter)
-                                        .padding(top = cardTopOverflow)
-                                        .width(cardWidth)
-                                        .height(cardHeight + badgeReservedHeight)
+                                        .wrapContentHeight(align = Alignment.Top, unbounded = true)
+                                        .width(carouselItemSlotWidth)
+                                        .height(itemContainerHeight)
                                         .graphicsLayer {
-                                            val layoutInfo = listState.layoutInfo
-                                            val vc = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2f
-                                            val span = (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset)
-                                                .toFloat().coerceAtLeast(1f)
-                                            val vi = layoutInfo.visibleItemsInfo.firstOrNull { it.index == listIndex }
-                                            val ic = if (vi != null) vi.offset + vi.size / 2f else vc
-
-                                            val distanceFromCenter = ic - vc
+                                            val tiltInput = tiltInputState.value
+                                            val distanceFromCenter = tiltInput.distanceFromCenterPx
+                                            val span = tiltInput.viewportSpanPx
                                             val normalizedDistance = (distanceFromCenter / span).coerceIn(-1f, 1f)
                                             val itemStepDistancePx = (carouselItemSlotWidthPx + carouselItemSpacingPx).coerceAtLeast(1f)
                                             val distanceInSteps = abs(distanceFromCenter) / itemStepDistancePx
@@ -479,7 +495,7 @@ internal fun LibraryCarouselPane(
                                                 val tiltInfluence = if (CAROUSEL_TILT_ANGLE > 0.1f) tiltAngle / CAROUSEL_TILT_ANGLE else 1f
                                                 val baseOffsetRatio = CAROUSEL_SIDE_OFFSET_RATIO + (distanceInSteps * CAROUSEL_STEP_OFFSET_RATIO)
                                                 val baseShift = direction * cardWidthPx * baseOffsetRatio * tiltInfluence
-                                                val edgeOffset = if (listIndex == 0 && layoutInfo.visibleItemsInfo.firstOrNull()?.index == 0) {
+                                                val edgeOffset = if (tiltInput.isFirstItemAtStart) {
                                                     firstTileOffsetPx
                                                 } else {
                                                     0f
@@ -493,11 +509,13 @@ internal fun LibraryCarouselPane(
                                             this.translationX = computedTranslationX
                                             cameraDistance = cameraDistancePx
                                             clip = false
+                                            compositingStrategy = CompositingStrategy.Offscreen
                                         },
                                 ) {
                                     Box(
                                         modifier = Modifier
                                             .align(Alignment.TopCenter)
+                                            .padding(top = cardTopPadding)
                                             .width(cardWidth)
                                             .height(cardHeight),
                                         contentAlignment = Alignment.Center,
@@ -515,6 +533,7 @@ internal fun LibraryCarouselPane(
                                             paneType = PaneType.GRID_CAPSULE,
                                             imageRefreshCounter = state.imageRefreshCounter,
                                             compatibilityStatus = state.compatibilityMap[item.name],
+                                            communityCompatibility = state.communityCompatibilityFor(item),
                                             gameStats = state.statsFor(item),
                                             showFocusGlow = false,
                                             enableFocusScale = false,
@@ -547,8 +566,8 @@ internal fun LibraryCarouselPane(
                         contentPadding = PaddingValues(
                             start = centeredHorizontalPadding,
                             end = centeredHorizontalPadding,
-                            top = topOverlayClearance,
-                            bottom = bottomOverlayClearance,
+                            top = carouselTopMargin,
+                            bottom = carouselBottomMargin,
                         ),
                     ) {
                         items(6) {

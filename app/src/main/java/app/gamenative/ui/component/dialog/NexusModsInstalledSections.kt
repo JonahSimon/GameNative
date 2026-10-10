@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.gamenative.R
 import app.gamenative.data.ModInstall
+import app.gamenative.data.ModInstallSource
 import app.gamenative.data.ModInstallStatus
 import app.gamenative.data.ModProfile
 import app.gamenative.mods.ModFileConflictReport
@@ -110,6 +111,8 @@ internal fun ProfilesSection(
 internal fun ProfileNameDialog(
     title: String,
     initialName: String,
+    labelResId: Int = R.string.nexus_profile_name,
+    maxLength: Int = Int.MAX_VALUE,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -121,9 +124,9 @@ internal fun ProfileNameDialog(
         text = {
             NoExtractOutlinedTextField(
                 value = name,
-                onValueChange = { name = it },
+                onValueChange = { name = it.take(maxLength) },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.nexus_profile_name)) },
+                label = { Text(stringResource(labelResId)) },
                 singleLine = true,
             )
         },
@@ -150,6 +153,7 @@ internal fun InstalledModsSection(
     enabledByInstallId: Map<String, Boolean>,
     selectedInstall: ModInstall?,
     placementNeededInstallIds: Set<String>,
+    activeInstallIds: Set<String>,
     onSelect: (ModInstall) -> Unit,
     onSetEnabled: (ModInstall, Boolean) -> Unit,
     onDelete: (ModInstall) -> Unit,
@@ -233,6 +237,7 @@ internal fun InstalledModsSection(
             visibleInstalls
                 .forEach { install ->
                     val index = orderedInstalls.indexOfFirst { it.installId == install.installId }
+                    val importActive = install.installId in activeInstallIds
                     val enabledInProfile = isEnabledInProfile(install, enabledByInstallId)
                     val status = if (install.installId in placementNeededInstallIds) {
                         "NEEDS_PLACEMENT"
@@ -259,7 +264,11 @@ internal fun InstalledModsSection(
                                     modifier = Modifier.size(22.dp),
                                 )
                                 InstalledModTitle(install, maxNameLines = 2, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { onDelete(install) }, modifier = Modifier.size(38.dp)) {
+                                IconButton(
+                                    onClick = { onDelete(install) },
+                                    enabled = !importActive,
+                                    modifier = Modifier.size(38.dp),
+                                ) {
                                     Icon(Icons.Default.Delete, contentDescription = if (install.canRetryImport()) stringResource(R.string.nexus_remove) else stringResource(R.string.delete))
                                 }
                             }
@@ -278,7 +287,10 @@ internal fun InstalledModsSection(
                                 }
                                 Spacer(Modifier.weight(1f))
                                 if (install.canRetryImport()) {
-                                    TextButton(onClick = { onRetry(install) }) {
+                                    TextButton(
+                                        onClick = { onRetry(install) },
+                                        enabled = !importActive,
+                                    ) {
                                         Text(retryLabel(install), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 } else if (install.canPlaceFiles()) {
@@ -327,7 +339,10 @@ internal fun InstalledModsSection(
                             }
                             StatusChip(status)
                             if (install.canRetryImport()) {
-                                TextButton(onClick = { onRetry(install) }) {
+                                TextButton(
+                                    onClick = { onRetry(install) },
+                                    enabled = !importActive,
+                                ) {
                                     Text(retryLabel(install), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             } else if (install.canPlaceFiles()) {
@@ -343,7 +358,10 @@ internal fun InstalledModsSection(
                                     Text(if (enabledInProfile) stringResource(R.string.nexus_disable) else stringResource(R.string.nexus_enable))
                                 }
                             }
-                            IconButton(onClick = { onDelete(install) }) {
+                            IconButton(
+                                onClick = { onDelete(install) },
+                                enabled = !importActive,
+                            ) {
                                 Icon(Icons.Default.Delete, contentDescription = if (install.canRetryImport()) stringResource(R.string.nexus_remove) else stringResource(R.string.delete))
                             }
                         }
@@ -356,6 +374,7 @@ internal fun InstalledModsSection(
 
 @Composable
 private fun retryLabel(install: ModInstall): String {
+    if (ModInstallSource.isLocal(install.source)) return stringResource(R.string.nexus_retry)
     if (install.status == ModInstallStatus.PAUSED.name) return stringResource(R.string.nexus_resume)
     if (install.status == ModInstallStatus.CANCELED.name) return stringResource(R.string.nexus_retry)
     val error = install.errorMessage().lowercase()
@@ -389,6 +408,19 @@ private fun InstalledModTitle(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        val localSourceLabel = when (install.source) {
+            ModInstallSource.LOCAL_ARCHIVE.name -> stringResource(R.string.local_mod_archive_source)
+            ModInstallSource.LOCAL_FILES.name -> stringResource(R.string.local_mod_files_source)
+            ModInstallSource.LOCAL_FOLDER.name -> stringResource(R.string.local_mod_folder_source)
+            else -> null
+        }
+        if (localSourceLabel != null) {
+            Text(
+                localSourceLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 

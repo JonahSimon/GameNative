@@ -401,6 +401,11 @@ fun ContainerConfigDialog(
         val installedWine = installedLists?.wine.orEmpty()
         val installedProton = installedLists?.proton.orEmpty()
         val installedWrapperDrivers = availability?.installedDrivers.orEmpty()
+        val installedWrappers = installedLists?.wrapper.orEmpty()
+
+        val bionicGraphicsDriversMerged = remember(bionicGraphicsDrivers, installedWrappers) {
+            (bionicGraphicsDrivers + installedWrappers.map { "Wrapper-$it" }).distinct()
+        }
 
         val dxvkOptions = remember(dxvkVersionsBase, installedDxvk, manifestDxvk) {
             ManifestComponentHelper.buildVersionOptionList(dxvkVersionsBase, installedDxvk, manifestDxvk)
@@ -660,7 +665,7 @@ fun ContainerConfigDialog(
 
         // Bionic-specific state
         val bionicDriverIndexRef = rememberSaveable {
-            val idx = bionicGraphicsDrivers.indexOfFirst { StringUtils.parseIdentifier(it) == config.graphicsDriver }
+            val idx = bionicGraphicsDriversMerged.indexOfFirst { StringUtils.parseIdentifier(it) == config.graphicsDriver }
             mutableIntStateOf(if (idx >= 0) idx else 0)
         }
         var bionicDriverIndex by bionicDriverIndexRef
@@ -691,6 +696,8 @@ fun ContainerConfigDialog(
         var sharpnessLevel by sharpnessLevelRef
         val sharpnessDenoiseRef = rememberSaveable { mutableIntStateOf(config.sharpnessDenoise.coerceIn(0, 100)) }
         var sharpnessDenoise by sharpnessDenoiseRef
+        val vibrationIntensityRef = rememberSaveable { mutableIntStateOf(config.vibrationIntensity.coerceIn(0, 100)) }
+        var vibrationIntensity by vibrationIntensityRef
         val adrenotoolsTurnipCheckedRef = rememberSaveable {
             val cfg = KeyValueSet(config.graphicsDriverConfig)
             mutableStateOf(cfg.get("adrenotoolsTurnip", "1") != "0")
@@ -737,12 +744,21 @@ fun ContainerConfigDialog(
             sharpnessDenoise = config.sharpnessDenoise.coerceIn(0, 100)
         }
 
+        LaunchedEffect(config.vibrationIntensity) {
+            vibrationIntensity = config.vibrationIntensity.coerceIn(0, 100)
+        }
+
         LaunchedEffect(versionsLoaded, wrapperOptions, config.graphicsDriverConfig) {
             if (!versionsLoaded) return@LaunchedEffect
             val cfg = KeyValueSet(config.graphicsDriverConfig)
             val ver = cfg.get("version", DefaultVersion.WRAPPER)
             val newIdx = wrapperOptions.ids.indexOfFirst { it.equals(ver, true) }.coerceAtLeast(0)
             if (wrapperVersionIndex != newIdx) wrapperVersionIndex = newIdx
+        }
+
+        LaunchedEffect(bionicGraphicsDriversMerged, config.graphicsDriver) {
+            val newIdx = bionicGraphicsDriversMerged.indexOfFirst { StringUtils.parseIdentifier(it) == config.graphicsDriver }
+            if (newIdx >= 0 && bionicDriverIndex != newIdx) bionicDriverIndex = newIdx
         }
 
         val screenSizeIndexRef = rememberSaveable {
@@ -1048,9 +1064,6 @@ fun ContainerConfigDialog(
         val nonzeroResolutionError = stringResource(
             R.string.container_config_custom_resolution_error_nonzero
         )
-        val aspectResolutionError = stringResource(
-            R.string.container_config_custom_resolution_error_aspect
-        )
 
         val state = ContainerConfigState(
             config = configState,
@@ -1079,6 +1092,7 @@ fun ContainerConfigDialog(
             sharpnessEffectIndex = sharpnessEffectIndexRef,
             sharpnessLevel = sharpnessLevelRef,
             sharpnessDenoise = sharpnessDenoiseRef,
+            vibrationIntensity = vibrationIntensityRef,
             adrenotoolsTurnipChecked = adrenotoolsTurnipCheckedRef,
             emulator64Index = emulator64IndexRef,
             emulator32Index = emulator32IndexRef,
@@ -1139,7 +1153,7 @@ fun ContainerConfigDialog(
             bionicWineEntriesBase = bionicWineEntriesBase,
             glibcWineEntriesBase = glibcWineEntriesBase,
             emulatorEntries = emulatorEntries,
-            bionicGraphicsDrivers = bionicGraphicsDrivers,
+            bionicGraphicsDrivers = bionicGraphicsDriversMerged,
             baseWrapperVersions = baseWrapperVersions,
             languages = languages,
             dxvkOptions = dxvkOptions,
@@ -1307,7 +1321,7 @@ fun ContainerConfigDialog(
                                 .verticalScroll(scrollState)
                                 .weight(1f),
                         ) {
-                            if (selectedTab == 0) GeneralTabContent(state, nonzeroResolutionError, aspectResolutionError)
+                            if (selectedTab == 0) GeneralTabContent(state, nonzeroResolutionError)
                             if (selectedTab == 1) GraphicsTabContent(state, default)
                             if (selectedTab == 2) EmulationTabContent(state)
                             if (selectedTab == 3) ControllerTabContent(state, default)
@@ -1347,7 +1361,7 @@ private fun Preview_ContainerConfigDialog() {
             launchRealSteam = false,
             launchBionicSteam = false,
             allowSteamUpdates = false,
-            steamType = "normal",
+            steamType = Container.STEAM_TYPE_HEADLESS,
             cpuList = "0,1,2,3",
             cpuListWoW64 = "0,1,2,3",
             wow64Mode = true,
@@ -1391,6 +1405,8 @@ internal fun ExecutablePathDropdown(
     var expanded by remember { mutableStateOf(false) }
     var executables by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var showCustomPathDialog by remember { mutableStateOf(false) }
+    var customPathText by remember { mutableStateOf("") }
     val context = LocalContext.current
 
     // Load executables from A: drive when component is first created
@@ -1439,7 +1455,7 @@ internal fun ExecutablePathDropdown(
             singleLine = true
         )
 
-        if (!isLoading && executables.isNotEmpty()) {
+        if (!isLoading) {
             ExposedDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false }
@@ -1467,7 +1483,40 @@ internal fun ExecutablePathDropdown(
                         }
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.container_config_executable_path_custom)) },
+                    onClick = {
+                        customPathText = value
+                        showCustomPathDialog = true
+                        expanded = false
+                    }
+                )
             }
         }
+    }
+
+    if (showCustomPathDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomPathDialog = false },
+            title = { Text(stringResource(R.string.container_config_executable_path_custom)) },
+            text = {
+                NoExtractOutlinedTextField(
+                    value = customPathText,
+                    onValueChange = { customPathText = it },
+                    placeholder = { Text(stringResource(R.string.container_config_executable_path_custom_placeholder)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onValueChange(customPathText.trim())
+                    showCustomPathDialog = false
+                }) { Text(stringResource(R.string.ok)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomPathDialog = false }) { Text(stringResource(R.string.cancel)) }
+            }
+        )
     }
 }
